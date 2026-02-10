@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { HardDrive, Info, ExternalLink } from 'lucide-react';
 
 export default function Settings() {
