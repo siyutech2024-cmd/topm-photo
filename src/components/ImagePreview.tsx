@@ -17,7 +17,7 @@ export default function ImagePreview({ productImages, effectImages, gridImages =
         a.click();
     };
 
-    const gridLabels = ['九宫格场景图 (3×3)', '十六宫格场景图 (4×4)'];
+    const gridLabels = ['九宫格场景图 (3×3)'];
 
     return (
         <div className="image-gallery">
