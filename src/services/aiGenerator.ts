@@ -303,16 +303,16 @@ function generateProductInfoFallback(): {
 // ===== 图片生成 Prompt 模板 =====
 
 const PRODUCT_IMG_PROMPTS = [
-    'Place this product on a pure white background with bright even lighting, e-commerce main image style, front view, high resolution 1000x1000 pixels, professional product photography',
-    'Show this product at a 45-degree angle on a minimalist gray-white gradient background, soft studio lighting, highlighting texture and details, e-commerce style, high definition',
-    'Display this product from the side view, pure white background, bright soft lighting, highlighting the product silhouette and design features, professional e-commerce photography',
-    'Place this product on a warm beige-toned background, creating a cozy atmosphere, soft lighting, showcasing the material and texture, high quality product image',
-    'Show this product from a top-down bird-eye view, clean white background, studio lighting, displaying top details and overall design, e-commerce style',
+    'Place this product on a luxurious white marble surface with subtle veining, soft golden rim lighting from the side, a gentle gradient backdrop from cream to pale gray, small decorative green leaf accent in the corner, professional e-commerce hero image, ultra high quality, 1000x1000',
+    'Display this product at a 45-degree angle on a rich dark wood table, surrounded by soft bokeh warm string lights in the background, a small potted succulent nearby, moody ambient studio lighting with golden hour warmth, premium lifestyle e-commerce photography',
+    'Show this product on a sleek glossy black acrylic surface with mirror reflection, dramatic backlit rim lighting in cool blue and purple tones, clean dark gradient background, futuristic high-end product photography, sharp details',
+    'Place this product on a natural linen fabric textured surface, surrounded by dried flowers, eucalyptus leaves and a small candle, warm earthy color palette with terracotta and sage green accents, soft diffused natural window light, organic aesthetic product photography',
+    'Present this product floating on a dreamy pastel gradient background blending from soft pink to lavender to sky blue, subtle geometric shadow patterns, light sparkle particles, airy and premium feel, modern e-commerce advertising style, high resolution',
 ];
 
 const EFFECT_IMG_PROMPTS = [
-    'Place this product in an elegant lifestyle scene, such as on a desk or in a living room setting, natural lighting, warm color tones, lifestyle usage context, high quality photography',
-    'Place this product in a professional studio environment with creative lighting effects, dark background to highlight the product, product on a display stand, high-end advertising level photography',
+    'Place this product in a stunning modern Scandinavian living room scene, light oak furniture, large window with natural sunlight streaming in, a cozy throw blanket, coffee cup and open magazine on the side table, warm inviting atmosphere, editorial lifestyle photography',
+    'Place this product in a sleek professional photography studio setup, dramatic three-point lighting with colored gels (warm amber and cool blue), product elevated on a rotating display pedestal, smoke/haze effect in the background, high-end commercial advertising campaign quality',
 ];
 
 // ===== 场景拼图 Prompt =====
