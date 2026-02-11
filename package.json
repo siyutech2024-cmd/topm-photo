@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.95.3",
+    "dexie": "^4.3.0",
     "file-saver": "^2.0.5",
     "jszip": "^3.10.1",
     "lucide-react": "^0.563.0",

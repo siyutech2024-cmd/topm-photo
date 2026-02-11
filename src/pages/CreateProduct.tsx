@@ -7,10 +7,9 @@ import ProductForm from '../components/ProductForm';
 import GeneratingAnimation from '../components/GeneratingAnimation';
 import { generateProductContent } from '../services/aiGenerator';
 import { createProduct } from '../services/productService';
-import { uploadImages } from '../services/storageService';
 import type { GenerationResult, ProductAttribute } from '../types';
 
-type Step = 'upload' | 'generating' | 'uploading' | 'edit' | 'done';
+type Step = 'upload' | 'generating' | 'edit' | 'done';
 
 export default function CreateProduct() {
     const navigate = useNavigate();
@@ -26,9 +25,8 @@ export default function CreateProduct() {
     const [currency, setCurrency] = useState('CNY');
     const [category, setCategory] = useState('数码电子');
     const [attributes, setAttributes] = useState<ProductAttribute[]>([]);
-    const [productImageUrls, setProductImageUrls] = useState<string[]>([]);
-    const [effectImageUrls, setEffectImageUrls] = useState<string[]>([]);
-    const [originalImageUrls, setOriginalImageUrls] = useState<string[]>([]);
+    const [productImages, setProductImages] = useState<string[]>([]);
+    const [effectImages, setEffectImages] = useState<string[]>([]);
 
     const handleGenerate = useCallback(async () => {
         if (images.length === 0) return;
@@ -37,9 +35,8 @@ export default function CreateProduct() {
         setProgressMsg('准备中...');
 
         try {
-            // Step 1: AI generate images (still local Canvas processing)
             const result: GenerationResult = await generateProductContent(images, (p, msg) => {
-                setProgress(Math.round(p * 0.6)); // 0-60% for generation
+                setProgress(Math.round(p * 100));
                 setProgressMsg(msg);
             });
 
@@ -48,32 +45,8 @@ export default function CreateProduct() {
             setPrice(result.price);
             setCategory(result.category);
             setAttributes(result.attributes);
-
-            // Step 2: Upload images to Supabase Storage
-            setStep('uploading');
-            setProgressMsg('正在上传图片到云端...');
-            setProgress(65);
-
-            const tempId = Date.now().toString();
-            const folder = `products/${tempId}`;
-
-            setProgressMsg('正在上传原始图片...');
-            setProgress(70);
-            const origUrls = await uploadImages(images, folder, 'original');
-            setOriginalImageUrls(origUrls);
-
-            setProgressMsg('正在上传产品图...');
-            setProgress(80);
-            const prodUrls = await uploadImages(result.productImages, folder, 'product');
-            setProductImageUrls(prodUrls);
-
-            setProgressMsg('正在上传效果图...');
-            setProgress(90);
-            const effUrls = await uploadImages(result.effectImages, folder, 'effect');
-            setEffectImageUrls(effUrls);
-
-            setProgress(100);
-            setProgressMsg('上传完成！');
+            setProductImages(result.productImages);
+            setEffectImages(result.effectImages);
             setStep('edit');
         } catch (err) {
             console.error('Generation error:', err);
@@ -91,9 +64,9 @@ export default function CreateProduct() {
                 currency,
                 category,
                 attributes,
-                original_images: originalImageUrls,
-                product_images: productImageUrls,
-                effect_images: effectImageUrls,
+                original_images: images,
+                product_images: productImages,
+                effect_images: effectImages,
                 status,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
@@ -109,8 +82,7 @@ export default function CreateProduct() {
     const getStepIndex = () => {
         switch (step) {
             case 'upload': return 0;
-            case 'generating':
-            case 'uploading': return 1;
+            case 'generating': return 1;
             case 'edit': return 2;
             case 'done': return 3;
             default: return 0;
@@ -166,8 +138,8 @@ export default function CreateProduct() {
                 </div>
             )}
 
-            {/* Step: Generating / Uploading */}
-            {(step === 'generating' || step === 'uploading') && (
+            {/* Step: Generating */}
+            {step === 'generating' && (
                 <div className="card">
                     <GeneratingAnimation progress={progress} message={progressMsg} />
                 </div>
@@ -181,7 +153,7 @@ export default function CreateProduct() {
                             <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>
                                 生成结果
                             </h2>
-                            <ImagePreview productImages={productImageUrls} effectImages={effectImageUrls} />
+                            <ImagePreview productImages={productImages} effectImages={effectImages} />
                         </div>
                     </div>
                     <div>
