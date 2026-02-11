@@ -1,216 +1,121 @@
 import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Sparkles, Save, Check } from 'lucide-react';
+import { Sparkles, Upload, CheckCircle } from 'lucide-react';
 import ImageUploader from '../components/ImageUploader';
-import ImagePreview from '../components/ImagePreview';
-import ProductForm from '../components/ProductForm';
-import GeneratingAnimation from '../components/GeneratingAnimation';
-import { generateProductContent } from '../services/aiGenerator';
 import { createProduct } from '../services/productService';
-import type { GenerationResult, ProductAttribute } from '../types';
-
-type Step = 'upload' | 'generating' | 'edit' | 'done';
+import { taskManager } from '../services/taskManager';
 
 export default function CreateProduct() {
-    const navigate = useNavigate();
-    const [step, setStep] = useState<Step>('upload');
     const [images, setImages] = useState<string[]>([]);
-    const [progress, setProgress] = useState(0);
-    const [progressMsg, setProgressMsg] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [justSubmitted, setJustSubmitted] = useState(false);
 
-    // Product data
-    const [title, setTitle] = useState('');
-    const [description, setDescription] = useState('');
-    const [price, setPrice] = useState(0);
-    const [currency, setCurrency] = useState('CNY');
-    const [category, setCategory] = useState('数码电子');
-    const [attributes, setAttributes] = useState<ProductAttribute[]>([]);
-    const [productImages, setProductImages] = useState<string[]>([]);
-    const [effectImages, setEffectImages] = useState<string[]>([]);
-    const [gridImages, setGridImages] = useState<string[]>([]);
-
-    const handleGenerate = useCallback(async () => {
-        if (images.length === 0) return;
-        setStep('generating');
-        setProgress(0);
-        setProgressMsg('准备中...');
+    const handleSubmit = useCallback(async () => {
+        if (images.length === 0 || submitting) return;
+        setSubmitting(true);
 
         try {
-            const result: GenerationResult = await generateProductContent(images, (p, msg) => {
-                setProgress(Math.round(p * 100));
-                setProgressMsg(msg);
-            });
-
-            setTitle(result.title);
-            setDescription(result.description);
-            setPrice(result.price);
-            setCategory(result.category);
-            setAttributes(result.attributes);
-            setProductImages(result.productImages);
-            setEffectImages(result.effectImages);
-            setGridImages(result.gridImages);
-            setStep('edit');
-        } catch (err) {
-            console.error('Generation error:', err);
-            alert('生成失败: ' + (err instanceof Error ? err.message : '未知错误'));
-            setStep('upload');
-        }
-    }, [images]);
-
-    const handleSave = async (status: 'draft' | 'generated') => {
-        try {
+            // 1. 立即创建 draft 产品（只保存原图）
             const id = await createProduct({
-                title,
-                description,
-                price,
-                currency,
-                category,
-                attributes,
+                title: '生成中...',
+                description: '',
+                price: 0,
+                currency: 'USD',
+                category: '',
+                attributes: [],
                 original_images: images,
-                product_images: productImages,
-                effect_images: effectImages,
-                grid_images: gridImages,
-                status,
+                product_images: [],
+                effect_images: [],
+                grid_images: [],
+                status: 'draft',
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
             });
-            setStep('done');
-            setTimeout(() => navigate(`/products/${id}`), 1500);
+
+            // 2. 加入后台生成队列
+            taskManager.addTask(id, images);
+
+            // 3. 显示成功提示，清空表单让用户继续上传
+            setJustSubmitted(true);
+            setImages([]);
+
+            setTimeout(() => {
+                setJustSubmitted(false);
+            }, 3000);
         } catch (err) {
-            console.error('Save error:', err);
-            alert('保存失败: ' + (err instanceof Error ? err.message : '未知错误'));
+            console.error('Submit error:', err);
+            alert('提交失败: ' + (err instanceof Error ? err.message : '未知错误'));
+        } finally {
+            setSubmitting(false);
         }
-    };
-
-    const getStepIndex = () => {
-        switch (step) {
-            case 'upload': return 0;
-            case 'generating': return 1;
-            case 'edit': return 2;
-            case 'done': return 3;
-            default: return 0;
-        }
-    };
-
-    const stepLabels = ['上传图片', 'AI 生成', '编辑信息', '完成'];
-    const currentStepIndex = getStepIndex();
+    }, [images, submitting]);
 
     return (
         <div>
             <div className="page-header">
                 <h1>创建产品</h1>
-                <p>上传产品实拍图，AI 自动生成电商产品图和信息</p>
+                <p>上传产品实拍图，AI 在后台自动生成产品图和信息，您可以继续上传新产品</p>
             </div>
 
-            {/* Steps indicator */}
-            <div className="steps">
-                {stepLabels.map((label, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-                        {i > 0 && <div className="step-divider" />}
-                        <div className={`step ${i === currentStepIndex ? 'active' : i < currentStepIndex ? 'completed' : ''}`}>
-                            <div className="step-number">
-                                {i < currentStepIndex ? <Check size={12} /> : i + 1}
-                            </div>
-                            <span>{label}</span>
-                        </div>
-                    </div>
-                ))}
-            </div>
-
-            {/* Step: Upload */}
-            {step === 'upload' && (
-                <div style={{ position: 'relative', zIndex: 1 }}>
-                    <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
-                        <ImageUploader images={images} onImagesChange={setImages} maxImages={4} />
-                    </div>
-                    {images.length > 0 && (
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-md)' }}>
-                            <button className="btn btn-secondary" onClick={() => setImages([])}>
-                                清空重选
-                            </button>
-                            <button className="btn btn-primary btn-lg" onClick={handleGenerate}>
-                                <Sparkles size={18} /> 开始 AI 生成
-                                {images.length < 4 && (
-                                    <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>
-                                        （已选 {images.length}/4 张）
-                                    </span>
-                                )}
-                            </button>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Step: Generating */}
-            {step === 'generating' && (
-                <div className="card">
-                    <GeneratingAnimation progress={progress} message={progressMsg} />
-                </div>
-            )}
-
-            {/* Step: Edit */}
-            {step === 'edit' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)', position: 'relative', zIndex: 1 }}>
-                    <div>
-                        <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
-                            <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>
-                                生成结果
-                            </h2>
-                            <ImagePreview productImages={productImages} effectImages={effectImages} gridImages={gridImages} />
-                        </div>
-                    </div>
-                    <div>
-                        <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
-                            <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>
-                                产品信息
-                            </h2>
-                            <ProductForm
-                                title={title}
-                                description={description}
-                                price={price}
-                                currency={currency}
-                                category={category}
-                                attributes={attributes}
-                                onTitleChange={setTitle}
-                                onDescriptionChange={setDescription}
-                                onPriceChange={setPrice}
-                                onCurrencyChange={setCurrency}
-                                onCategoryChange={setCategory}
-                                onAttributesChange={setAttributes}
-                            />
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-md)' }}>
-                            <button className="btn btn-secondary" onClick={() => handleSave('draft')}>
-                                <Save size={16} /> 保存为草稿
-                            </button>
-                            <button className="btn btn-primary" onClick={() => handleSave('generated')}>
-                                <Check size={16} /> 确认保存
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Step: Done */}
-            {step === 'done' && (
-                <div className="card" style={{ textAlign: 'center', padding: 'var(--space-3xl)', position: 'relative', zIndex: 1 }}>
-                    <div style={{
-                        width: 80, height: 80, borderRadius: '50%',
-                        background: 'rgba(52, 211, 153, 0.12)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        margin: '0 auto var(--space-lg)',
+            {/* Success notification */}
+            {justSubmitted && (
+                <div
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 'var(--space-md)',
+                        padding: 'var(--space-md) var(--space-lg)',
+                        marginBottom: 'var(--space-lg)',
+                        borderRadius: 'var(--radius-lg)',
+                        background: 'rgba(52, 211, 153, 0.1)',
+                        border: '1px solid rgba(52, 211, 153, 0.3)',
                         color: 'var(--color-success)',
-                    }}>
-                        <Check size={36} />
-                    </div>
-                    <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 'var(--space-sm)' }}>
-                        产品创建成功！
-                    </h2>
-                    <p style={{ color: 'var(--color-text-secondary)' }}>
-                        正在跳转到产品详情页...
-                    </p>
+                        fontSize: '0.9rem',
+                        fontWeight: 500,
+                        animation: 'fadeInDown 0.3s ease',
+                    }}
+                >
+                    <CheckCircle size={20} />
+                    <span>已提交！AI 正在后台生成中，您可以继续上传新产品。查看右下角进度。</span>
                 </div>
             )}
+
+            {/* Upload area */}
+            <div style={{ position: 'relative', zIndex: 1 }}>
+                <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
+                    <ImageUploader images={images} onImagesChange={setImages} maxImages={4} />
+                </div>
+
+                {images.length > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-md)' }}>
+                        <button className="btn btn-secondary" onClick={() => setImages([])}>
+                            清空重选
+                        </button>
+                        <button
+                            className="btn btn-primary btn-lg"
+                            onClick={handleSubmit}
+                            disabled={submitting}
+                            style={{ minWidth: 180 }}
+                        >
+                            {submitting ? (
+                                <>
+                                    <Upload size={18} style={{ animation: 'spin 1s linear infinite' }} />
+                                    提交中...
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles size={18} />
+                                    提交并后台生成
+                                    {images.length < 4 && (
+                                        <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>
+                                            （已选 {images.length}/4 张）
+                                        </span>
+                                    )}
+                                </>
+                            )}
+                        </button>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

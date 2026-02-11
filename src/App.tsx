@@ -5,6 +5,7 @@ import CreateProduct from './pages/CreateProduct';
 import ProductList from './pages/ProductList';
 import ProductDetail from './pages/ProductDetail';
 import Settings from './pages/Settings';
+import TaskQueue from './components/TaskQueue';
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>
+      <TaskQueue />
     </BrowserRouter>
   );
 }
