@@ -210,26 +210,32 @@ async function generateProductInfoWithGemini(sourceImages: string[]): Promise<{
 
     const contents: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
         {
-            text: `你是一位专业的电商产品运营专家。请仔细观察这些产品图片，然后生成完整的电商产品信息。
+            text: `Eres un experto profesional en operaciones de productos de e-commerce. Observa cuidadosamente estas imágenes del producto y genera la información completa del producto en ESPAÑOL.
 
-请严格按照以下 JSON 格式返回，不要包含任何其他文字或 markdown 标记：
+Devuelve ESTRICTAMENTE en el siguiente formato JSON, sin ningún otro texto ni marcas markdown:
 
 {
-  "title": "产品标题（15-30字，包含核心卖点和关键词）",
-  "description": "产品详细描述（100-200字，包含产品特点、材质、适用场景、优势等）",
-  "price": 数字（合理的市场价格，不带货币符号），
-  "category": "产品类目（从以下选择：数码电子、服装鞋帽、家居家具、美妆个护、食品饮料、运动户外、母婴玩具、图书文具、珠宝配饰、汽车用品、其他）",
+  "title": "Título del producto (10-20 palabras, incluir puntos de venta clave y palabras clave)",
+  "description": "Descripción detallada del producto (80-150 palabras, incluir características, materiales, escenarios de uso, ventajas, etc.)",
+  "price": número (precio de mercado razonable en USD, sin símbolo de moneda),
+  "category": "Categoría del producto (elegir de: Electrónica, Ropa y Calzado, Hogar y Muebles, Belleza y Cuidado Personal, Alimentos y Bebidas, Deportes y Aire Libre, Bebés y Juguetes, Libros y Papelería, Joyería y Accesorios, Automotriz, Otros)",
   "attributes": [
-    {"key": "品牌", "value": "识别或推测的品牌"},
-    {"key": "材质", "value": "产品材质"},
-    {"key": "颜色", "value": "产品颜色"},
-    {"key": "尺寸", "value": "预估尺寸"},
-    {"key": "重量", "value": "预估重量"},
-    {"key": "产地", "value": "推测产地"},
-    {"key": "包装", "value": "包装方式"},
-    {"key": "保修", "value": "保修期限"}
+    {"key": "Marca", "value": "marca identificada o estimada"},
+    {"key": "Material", "value": "material del producto"},
+    {"key": "Color", "value": "color del producto"},
+    {"key": "Dimensiones", "value": "tamaño estimado"},
+    {"key": "Peso", "value": "peso estimado"},
+    {"key": "Origen", "value": "país de origen estimado"},
+    {"key": "Empaque", "value": "tipo de empaque"},
+    {"key": "Garantía", "value": "período de garantía"}
   ]
-}`,
+}
+
+Requisitos:
+1. El título debe ser atractivo, incluir los puntos de venta principales
+2. La descripción debe ser detallada y profesional, destacando las ventajas del producto
+3. El precio debe ser acorde al mercado para este tipo de producto (en USD)
+4. Los atributos deben ser lo más precisos posible, basados en el contenido de las imágenes`,
         },
     ];
 
@@ -263,33 +269,33 @@ async function generateProductInfoWithGemini(sourceImages: string[]): Promise<{
         title: parsed.title || '未命名产品',
         description: parsed.description || '',
         price: typeof parsed.price === 'number' ? parsed.price : parseFloat(parsed.price) || 99.9,
-        category: parsed.category || '其他',
+        category: parsed.category || 'Otros',
         attributes: Array.isArray(parsed.attributes) ? parsed.attributes : [],
     };
 }
 
-// ===== Fallback 模拟生成 =====
+// ===== Fallback 模拟生成 (西班牙语) =====
 
 function generateProductInfoFallback(): {
     title: string; description: string; price: number; category: string; attributes: ProductAttribute[];
 } {
     const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
-    const prefix = pick(['高品质', '经典款', '新款升级版', '热销爆款', '简约时尚']);
-    const suffix = pick(['多功能设计 品质生活之选', '精工制造 匠心独运', '简约设计 百搭实用']);
+    const prefix = pick(['Premium', 'Clásico', 'Nueva Edición', 'Más Vendido', 'Elegante']);
+    const suffix = pick(['Diseño Multifuncional', 'Calidad Superior', 'Estilo Minimalista']);
     return {
-        title: `${prefix} ${suffix}`,
-        description: `这款${prefix}产品采用优质材料精心制作，${suffix.replace(/ /g, '，')}。适合各种场合使用。`,
+        title: `${prefix} - ${suffix}`,
+        description: `Este producto ${prefix.toLowerCase()} está elaborado con materiales de alta calidad. ${suffix}, perfecto para cualquier ocasión.`,
         price: Math.floor(Math.random() * 500 + 50) + 0.99,
-        category: pick(['数码电子', '服装鞋帽', '家居家具', '美妆个护']),
+        category: pick(['Electrónica', 'Ropa y Calzado', 'Hogar y Muebles', 'Belleza y Cuidado Personal']),
         attributes: [
-            { key: '品牌', value: 'TOPM' },
-            { key: '材质', value: pick(['优质棉', '高级合金', 'ABS工程塑料']) },
-            { key: '颜色', value: pick(['经典黑', '珍珠白', '深空灰']) },
-            { key: '尺寸', value: pick(['S/M/L/XL', '均码', '25×15×10cm']) },
-            { key: '重量', value: pick(['150g', '280g', '450g']) },
-            { key: '产地', value: pick(['中国广东', '中国浙江']) },
-            { key: '包装', value: pick(['精美礼盒', '环保纸盒']) },
-            { key: '保修', value: pick(['一年质保', '两年质保']) },
+            { key: 'Marca', value: 'TOPM' },
+            { key: 'Material', value: pick(['Algodón premium', 'Aleación de alta calidad', 'Plástico ABS']) },
+            { key: 'Color', value: pick(['Negro clásico', 'Blanco perla', 'Gris espacial']) },
+            { key: 'Dimensiones', value: pick(['S/M/L/XL', 'Talla única', '25×15×10cm']) },
+            { key: 'Peso', value: pick(['150g', '280g', '450g']) },
+            { key: 'Origen', value: pick(['China - Guangdong', 'China - Zhejiang']) },
+            { key: 'Empaque', value: pick(['Caja de regalo', 'Caja ecológica']) },
+            { key: 'Garantía', value: pick(['1 año', '2 años']) },
         ],
     };
 }
@@ -297,16 +303,16 @@ function generateProductInfoFallback(): {
 // ===== 图片生成 Prompt 模板 =====
 
 const PRODUCT_IMG_PROMPTS = [
-    '将这个产品放在纯白色背景上拍摄，光线明亮均匀，电商产品主图风格，正面展示，高清 1000x1000 像素，专业产品摄影',
-    '将这个产品以45度角展示在简约渐变灰白背景上，柔和的影棚打光，突出产品质感和细节，电商风格，高清',
-    '从侧面展示这个产品，纯白背景，明亮柔和的灯光，突出产品轮廓和设计特色，专业电商摄影风格',
-    '将这个产品放在浅米色暖色调背景上，营造温馨氛围，光线柔和，展示产品的材质和纹理，高品质产品图',
-    '从俯视角度展示这个产品，干净的白色背景，影棚灯光，展示产品的顶部细节和整体设计，电商风格',
+    'Place this product on a pure white background with bright even lighting, e-commerce main image style, front view, high resolution 1000x1000 pixels, professional product photography',
+    'Show this product at a 45-degree angle on a minimalist gray-white gradient background, soft studio lighting, highlighting texture and details, e-commerce style, high definition',
+    'Display this product from the side view, pure white background, bright soft lighting, highlighting the product silhouette and design features, professional e-commerce photography',
+    'Place this product on a warm beige-toned background, creating a cozy atmosphere, soft lighting, showcasing the material and texture, high quality product image',
+    'Show this product from a top-down bird-eye view, clean white background, studio lighting, displaying top details and overall design, e-commerce style',
 ];
 
 const EFFECT_IMG_PROMPTS = [
-    '将这个产品放在优雅的生活场景中展示，比如书桌上或客厅环境，自然光线，生活化场景使用效果图，温暖色调，高品质摄影',
-    '将这个产品放在专业的影棚环境中拍摄，使用创意灯光效果，暗调背景突出产品，产品放在展台或展架上，高端广告级摄影效果',
+    'Place this product in an elegant lifestyle scene, such as on a desk or in a living room setting, natural lighting, warm color tones, lifestyle usage context, high quality photography',
+    'Place this product in a professional studio environment with creative lighting effects, dark background to highlight the product, product on a display stand, high-end advertising level photography',
 ];
 
 // ===== 主入口 =====
