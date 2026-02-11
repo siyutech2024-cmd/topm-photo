@@ -1,18 +1,21 @@
 /**
- * 后台任务管理器
- * 管理 AI 产品生成的后台任务队列，用户可以继续操作不被阻塞
+ * 后台任务管理器（并发版）
+ * 支持同时处理多个 AI 产品生成任务
  */
 
 import { generateProductContent } from './aiGenerator';
 import { updateProduct } from './productService';
 import type { GenerationResult } from '../types';
 
+/** 最大并发任务数 */
+const MAX_CONCURRENT = 3;
+
 export interface BackgroundTask {
-    id: string;            // task ID (same as product ID)
+    id: string;
     productId: string;
     sourceImages: string[];
     status: 'queued' | 'running' | 'completed' | 'failed';
-    progress: number;      // 0-100
+    progress: number;
     message: string;
     result?: GenerationResult;
     error?: string;
@@ -24,7 +27,7 @@ type TaskListener = (tasks: BackgroundTask[]) => void;
 class TaskManager {
     private tasks: Map<string, BackgroundTask> = new Map();
     private listeners: Set<TaskListener> = new Set();
-    private processing = false;
+    private runningCount = 0;
     private queue: string[] = [];
 
     subscribe(listener: TaskListener): () => void {
@@ -42,7 +45,6 @@ class TaskManager {
         return Array.from(this.tasks.values()).sort((a, b) => b.createdAt - a.createdAt);
     }
 
-    /** Add a generation task to the queue */
     addTask(productId: string, sourceImages: string[]) {
         const task: BackgroundTask = {
             id: productId,
@@ -56,29 +58,26 @@ class TaskManager {
         this.tasks.set(productId, task);
         this.queue.push(productId);
         this.notify();
-        this.processNext();
+        this.drainQueue();
     }
 
-    /** Remove a completed/failed task from the list */
     dismissTask(taskId: string) {
         this.tasks.delete(taskId);
         this.notify();
     }
 
-    private async processNext() {
-        if (this.processing || this.queue.length === 0) return;
-
-        this.processing = true;
-        const taskId = this.queue.shift()!;
-        const task = this.tasks.get(taskId);
-
-        if (!task) {
-            this.processing = false;
-            this.processNext();
-            return;
+    /** Try to start as many queued tasks as concurrency allows */
+    private drainQueue() {
+        while (this.runningCount < MAX_CONCURRENT && this.queue.length > 0) {
+            const taskId = this.queue.shift()!;
+            const task = this.tasks.get(taskId);
+            if (!task) continue;
+            this.runTask(task);
         }
+    }
 
-        // Update status to running
+    private async runTask(task: BackgroundTask) {
+        this.runningCount++;
         task.status = 'running';
         task.message = '正在启动 AI 生成...';
         this.notify();
@@ -90,7 +89,6 @@ class TaskManager {
                 this.notify();
             });
 
-            // Update product in DB with generated content
             await updateProduct(task.productId, {
                 title: result.title,
                 description: result.description,
@@ -115,18 +113,16 @@ class TaskManager {
             console.error('Background task failed:', err);
         }
 
+        this.runningCount--;
         this.notify();
-        this.processing = false;
 
-        // Auto-dismiss completed tasks after 30s
         if (task.status === 'completed') {
-            setTimeout(() => this.dismissTask(taskId), 30000);
+            setTimeout(() => this.dismissTask(task.id), 30000);
         }
 
-        // Process next in queue
-        this.processNext();
+        // Pick up next queued tasks
+        this.drainQueue();
     }
 }
 
-// Global singleton
 export const taskManager = new TaskManager();
