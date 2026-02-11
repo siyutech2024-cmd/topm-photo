@@ -13,6 +13,7 @@ function recordToProduct(record: ProductRecord): Product {
         original_images: JSON.parse(record.original_images || '[]'),
         product_images: JSON.parse(record.product_images || '[]'),
         effect_images: JSON.parse(record.effect_images || '[]'),
+        grid_images: JSON.parse(record.grid_images || '[]'),
         status: record.status as Product['status'],
         created_at: record.created_at,
         updated_at: record.updated_at,
@@ -30,6 +31,7 @@ function productToRecord(product: Omit<Product, 'id'>): Omit<ProductRecord, 'id'
         original_images: JSON.stringify(product.original_images),
         product_images: JSON.stringify(product.product_images),
         effect_images: JSON.stringify(product.effect_images),
+        grid_images: JSON.stringify(product.grid_images),
         status: product.status,
         created_at: product.created_at,
         updated_at: product.updated_at,
@@ -63,6 +65,7 @@ export async function updateProduct(id: string, updates: Partial<Product>): Prom
     if (updates.original_images !== undefined) partial.original_images = JSON.stringify(updates.original_images);
     if (updates.product_images !== undefined) partial.product_images = JSON.stringify(updates.product_images);
     if (updates.effect_images !== undefined) partial.effect_images = JSON.stringify(updates.effect_images);
+    if (updates.grid_images !== undefined) partial.grid_images = JSON.stringify(updates.grid_images);
     partial.updated_at = new Date().toISOString();
 
     await db.products.update(Number(id), partial);

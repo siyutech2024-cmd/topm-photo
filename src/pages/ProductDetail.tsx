@@ -122,7 +122,7 @@ export default function ProductDetail() {
             <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: 'var(--space-lg)', position: 'relative', zIndex: 1 }}>
                 {/* Images */}
                 <div className="card">
-                    <ImagePreview productImages={product.product_images} effectImages={product.effect_images} />
+                    <ImagePreview productImages={product.product_images} effectImages={product.effect_images} gridImages={product.grid_images} />
                 </div>
 
                 {/* Info */}
@@ -223,6 +223,15 @@ export default function ProductDetail() {
                                     }}>
                                         原图 {product.original_images.length} 张
                                     </div>
+                                    {product.grid_images?.length > 0 && (
+                                        <div style={{
+                                            padding: '8px 16px', borderRadius: 'var(--radius-md)',
+                                            background: 'rgba(139,92,246,0.12)', fontSize: '0.85rem',
+                                            color: '#8b5cf6', fontWeight: 600,
+                                        }}>
+                                            场景拼图 {product.grid_images.length} 张
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </>

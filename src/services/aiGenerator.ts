@@ -315,6 +315,111 @@ const EFFECT_IMG_PROMPTS = [
     'Place this product in a professional studio environment with creative lighting effects, dark background to highlight the product, product on a display stand, high-end advertising level photography',
 ];
 
+// ===== 场景拼图 Prompt =====
+
+const GRID_SCENE_PROMPTS = [
+    'This product being used by a person at home in a cozy living room, lifestyle photography, warm lighting',
+    'This product displayed on a modern desk workspace with a laptop and coffee, clean aesthetic',
+    'Close-up detail shot of this product showing texture and craftsmanship, macro photography style',
+    'This product being held in hands, showing scale and real-world use, natural daylight',
+    'This product in an outdoor setting, park or street scene, casual lifestyle photography',
+    'This product arranged in a flat-lay composition with complementary accessories, top-down view',
+    'This product in a gift-giving scenario, beautiful wrapping, festive atmosphere',
+    'This product shown in packaging or unboxing moment, clean background, excitement feeling',
+    'This product being used in its primary use case scenario, action shot, dynamic angle',
+    'This product on a minimalist shelf display with decorative plants, interior design aesthetic',
+    'Multiple angles of this product arranged artistically, catalog style photography',
+    'This product in a seasonal themed setting, cozy atmosphere with warm tones',
+    'This product being compared with everyday objects for size reference, informative composition',
+    'This product in a luxury retail store display environment, premium branding feel',
+    'This product in a travel or commute scenario, portable and convenient use case',
+    'This product in a festive celebration setting with people enjoying it, joyful mood',
+];
+
+async function generateGridImage(
+    sourceImages: string[],
+    gridSize: 3 | 4,
+    prompts: string[],
+    useNanoBanana: boolean,
+    onCellReady?: (index: number, total: number) => void,
+): Promise<string> {
+    const totalCells = gridSize * gridSize;
+    const cellImages: string[] = [];
+
+    // Generate individual scene images
+    for (let i = 0; i < totalCells; i++) {
+        onCellReady?.(i + 1, totalCells);
+        const prompt = prompts[i % prompts.length];
+
+        if (useNanoBanana) {
+            const aiImage = await generateImageWithNanoBanana(sourceImages, prompt);
+            if (aiImage) {
+                cellImages.push(aiImage);
+                continue;
+            }
+        }
+        // Fallback: use source images with varied Canvas styles
+        cellImages.push(
+            await generateProductImageCanvas(sourceImages, PRODUCT_STYLES[i % PRODUCT_STYLES.length], i)
+        );
+    }
+
+    // Compose grid using Canvas
+    const cellSize = 500;
+    const gap = 4;
+    const totalSize = gridSize * cellSize + (gridSize - 1) * gap;
+    const canvas = document.createElement('canvas');
+    canvas.width = totalSize;
+    canvas.height = totalSize;
+    const ctx = canvas.getContext('2d')!;
+
+    // Dark background
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, totalSize, totalSize);
+
+    // Draw each cell
+    for (let row = 0; row < gridSize; row++) {
+        for (let col = 0; col < gridSize; col++) {
+            const idx = row * gridSize + col;
+            if (idx >= cellImages.length) break;
+
+            const x = col * (cellSize + gap);
+            const y = row * (cellSize + gap);
+
+            try {
+                const img = await loadImage(cellImages[idx]);
+                // Cover-fit the image into the cell
+                const scale = Math.max(cellSize / img.width, cellSize / img.height);
+                const w = img.width * scale;
+                const h = img.height * scale;
+                const ox = (cellSize - w) / 2;
+                const oy = (cellSize - h) / 2;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.roundRect(x, y, cellSize, cellSize, 6);
+                ctx.clip();
+                ctx.drawImage(img, x + ox, y + oy, w, h);
+                ctx.restore();
+            } catch {
+                // If image load fails, draw a placeholder
+                ctx.fillStyle = '#1a1a2e';
+                ctx.fillRect(x, y, cellSize, cellSize);
+            }
+        }
+    }
+
+    // Add subtle watermark
+    ctx.globalAlpha = 0.04;
+    ctx.font = `bold ${Math.round(totalSize * 0.03)}px Inter, system-ui, sans-serif`;
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText('TOPM PHOTO', totalSize / 2, totalSize - 20);
+    ctx.globalAlpha = 1;
+
+    return canvas.toDataURL('image/jpeg', 0.90);
+}
+
 // ===== 主入口 =====
 
 export async function generateProductContent(
@@ -322,7 +427,7 @@ export async function generateProductContent(
     onProgress?: (progress: number, message: string) => void
 ): Promise<GenerationResult> {
     const useNanoBanana = !!GEMINI_API_KEY;
-    const totalSteps = 9;
+    const totalSteps = 12;
     let currentStep = 0;
     const report = (msg: string) => {
         currentStep++;
@@ -363,7 +468,22 @@ export async function generateProductContent(
         effectImages.push(await generateEffectImageCanvas(sourceImages, i));
     }
 
-    // Step 8: Generate product info
+    // Step 8-9: Generate grid images (3x3 九宫格 + 4x4 十六宫格)
+    const gridImages: string[] = [];
+
+    report('正在生成九宫格场景图（3×3）...');
+    const grid3x3 = await generateGridImage(
+        sourceImages, 3, GRID_SCENE_PROMPTS.slice(0, 9), useNanoBanana,
+    );
+    gridImages.push(grid3x3);
+
+    report('正在生成十六宫格场景图（4×4）...');
+    const grid4x4 = await generateGridImage(
+        sourceImages, 4, GRID_SCENE_PROMPTS, useNanoBanana,
+    );
+    gridImages.push(grid4x4);
+
+    // Step 10: Generate product info
     report('AI 正在分析产品信息...');
     let info;
     if (GEMINI_API_KEY) {
@@ -377,5 +497,5 @@ export async function generateProductContent(
         info = generateProductInfoFallback();
     }
 
-    return { productImages, effectImages, ...info };
+    return { productImages, effectImages, gridImages, ...info };
 }

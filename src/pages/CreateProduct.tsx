@@ -27,6 +27,7 @@ export default function CreateProduct() {
     const [attributes, setAttributes] = useState<ProductAttribute[]>([]);
     const [productImages, setProductImages] = useState<string[]>([]);
     const [effectImages, setEffectImages] = useState<string[]>([]);
+    const [gridImages, setGridImages] = useState<string[]>([]);
 
     const handleGenerate = useCallback(async () => {
         if (images.length === 0) return;
@@ -47,6 +48,7 @@ export default function CreateProduct() {
             setAttributes(result.attributes);
             setProductImages(result.productImages);
             setEffectImages(result.effectImages);
+            setGridImages(result.gridImages);
             setStep('edit');
         } catch (err) {
             console.error('Generation error:', err);
@@ -67,6 +69,7 @@ export default function CreateProduct() {
                 original_images: images,
                 product_images: productImages,
                 effect_images: effectImages,
+                grid_images: gridImages,
                 status,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
@@ -153,7 +156,7 @@ export default function CreateProduct() {
                             <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>
                                 生成结果
                             </h2>
-                            <ImagePreview productImages={productImages} effectImages={effectImages} />
+                            <ImagePreview productImages={productImages} effectImages={effectImages} gridImages={gridImages} />
                         </div>
                     </div>
                     <div>
