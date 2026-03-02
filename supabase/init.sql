@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS products (
   original_images TEXT[] NOT NULL DEFAULT '{}',
   product_images TEXT[] NOT NULL DEFAULT '{}',
   effect_images TEXT[] NOT NULL DEFAULT '{}',
+  grid_images TEXT[] NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'generated', 'published')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -40,7 +41,7 @@ CREATE TRIGGER trigger_update_products_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
--- 4. 创建 Storage Bucket（需要通过 Supabase Dashboard 或 API 创建）
+-- 4. 创建 Storage Bucket
 -- 在 Supabase Dashboard → Storage → 创建 "product-images" bucket
 -- 设置为 Public bucket 以允许公开读取
 

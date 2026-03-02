@@ -1,4 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
 import type { GenerationResult, ProductAttribute } from '../types';
 
 /**
@@ -6,12 +5,51 @@ import type { GenerationResult, ProductAttribute } from '../types';
  * - 产品图/效果图：Gemini 2.5 Flash Image (Nano Banana) 原生生成
  * - 产品信息：Gemini 2.0 Flash 视觉分析（标题、描述、价格、属性）
  * - Fallback：Canvas API 本地处理 + 随机模拟数据
+ *
+ * 本地开发：使用 VITE_GEMINI_API_KEY 直接调用 SDK
+ * 线上生产：通过 /api/gemini 代理（API Key 存储在服务端）
  */
 
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
+const VITE_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
 
-function getAI() {
-    return new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+/** 是否有可用的 Gemini API（本地 Key 或线上代理） */
+function hasGeminiAccess(): boolean {
+    // 本地有 Key，或者在生产环境（部署到 Vercel 后有 /api/gemini 代理）
+    return !!VITE_GEMINI_API_KEY || import.meta.env.PROD;
+}
+
+/**
+ * 统一的 Gemini API 调用入口
+ * - 本地：直接调用 Google REST API (带 VITE_GEMINI_API_KEY)
+ * - 线上：通过 /api/gemini 代理
+ */
+async function callGemini(
+    model: string,
+    contents: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }>,
+): Promise<{ candidates?: Array<{ content?: { parts?: Array<{ text?: string; inlineData?: { mimeType?: string; data?: string } }> } }> }> {
+    if (VITE_GEMINI_API_KEY) {
+        // 本地开发模式：直接调用 Google API
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${VITE_GEMINI_API_KEY}`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: contents }] }),
+        });
+        if (!resp.ok) throw new Error(`Gemini API error: ${resp.status}`);
+        return await resp.json();
+    } else {
+        // 线上生产模式：通过 /api/gemini 代理
+        const resp = await fetch('/api/gemini', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, contents }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.error || `Proxy error: ${resp.status}`);
+        }
+        return await resp.json();
+    }
 }
 
 // ===== 工具函数 =====
@@ -43,8 +81,6 @@ async function generateImageWithNanoBanana(
     prompt: string,
 ): Promise<string | null> {
     try {
-        const ai = getAI();
-
         // Build content parts: text prompt + reference images
         const contents: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
             { text: prompt },
@@ -60,10 +96,7 @@ async function generateImageWithNanoBanana(
             });
         }
 
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: contents,
-        });
+        const response = await callGemini('gemini-2.5-flash-image', contents);
 
         // Extract generated image from response
         if (response.candidates?.[0]?.content?.parts) {
@@ -206,8 +239,6 @@ async function generateProductInfoWithGemini(sourceImages: string[]): Promise<{
     category: string;
     attributes: ProductAttribute[];
 }> {
-    const ai = getAI();
-
     const contents: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
         {
             text: `Eres un experto profesional en operaciones de productos de e-commerce. Observa cuidadosamente estas imágenes del producto y genera la información completa del producto en ESPAÑOL.
@@ -248,10 +279,7 @@ Requisitos:
         });
     }
 
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: contents,
-    });
+    const response = await callGemini('gemini-2.0-flash', contents);
 
     const text = response.candidates?.[0]?.content?.parts
         ?.map(p => p.text)
@@ -426,7 +454,7 @@ export async function generateProductContent(
     sourceImages: string[],
     onProgress?: (progress: number, message: string) => void
 ): Promise<GenerationResult> {
-    const useNanoBanana = !!GEMINI_API_KEY;
+    const useNanoBanana = hasGeminiAccess();
     const totalSteps = 10;
     let currentStep = 0;
     const report = (msg: string) => {
@@ -480,7 +508,7 @@ export async function generateProductContent(
     // Step 9: Generate product info
     report('AI 正在分析产品信息...');
     let info;
-    if (GEMINI_API_KEY) {
+    if (hasGeminiAccess()) {
         try {
             info = await generateProductInfoWithGemini(sourceImages);
         } catch (err) {

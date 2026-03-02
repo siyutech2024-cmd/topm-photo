@@ -36,11 +36,17 @@ export async function exportProductsToExcel(products: Product[]): Promise<void> 
     saveAs(blob, `TOPM_产品数据_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')}.xlsx`);
 }
 
-function imageToBlob(image: string): Blob {
+async function imageToBlob(image: string): Promise<Blob> {
     // Check if it's a URL or base64
     if (image.startsWith('http')) {
-        // For URLs, we'd need to fetch - but in local mode we use base64
-        return new Blob();
+        try {
+            const response = await fetch(image);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.blob();
+        } catch (err) {
+            console.warn('下载图片失败:', err);
+            return new Blob();
+        }
     }
     return base64ToBlob(image);
 }
@@ -75,17 +81,17 @@ export async function exportProductsWithImages(products: Product[]): Promise<voi
 
         const origFolder = productFolder.folder('原始图片')!;
         for (let i = 0; i < product.original_images.length; i++) {
-            origFolder.file(`原图_${i + 1}.jpg`, imageToBlob(product.original_images[i]));
+            origFolder.file(`原图_${i + 1}.jpg`, await imageToBlob(product.original_images[i]));
         }
 
         const prodImgFolder = productFolder.folder('产品图')!;
         for (let i = 0; i < product.product_images.length; i++) {
-            prodImgFolder.file(`产品图_${i + 1}.jpg`, imageToBlob(product.product_images[i]));
+            prodImgFolder.file(`产品图_${i + 1}.jpg`, await imageToBlob(product.product_images[i]));
         }
 
         const effectFolder = productFolder.folder('效果图')!;
         for (let i = 0; i < product.effect_images.length; i++) {
-            effectFolder.file(`效果图_${i + 1}.jpg`, imageToBlob(product.effect_images[i]));
+            effectFolder.file(`效果图_${i + 1}.jpg`, await imageToBlob(product.effect_images[i]));
         }
     }
 
