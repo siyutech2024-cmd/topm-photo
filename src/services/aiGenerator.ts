@@ -455,7 +455,7 @@ export async function generateProductContent(
     onProgress?: (progress: number, message: string) => void
 ): Promise<GenerationResult> {
     const useNanoBanana = hasGeminiAccess();
-    const totalSteps = 10;
+    const totalSteps = 9;
     let currentStep = 0;
     const report = (msg: string) => {
         currentStep++;
@@ -496,16 +496,10 @@ export async function generateProductContent(
         effectImages.push(await generateEffectImageCanvas(sourceImages, i));
     }
 
-    // Step 8: Generate grid image (3x3 九宫格)
+    // 九宫格图已禁用
     const gridImages: string[] = [];
 
-    report('正在生成九宫格场景图（3×3）...');
-    const grid3x3 = await generateGridImage(
-        sourceImages, 3, GRID_SCENE_PROMPTS.slice(0, 9), useNanoBanana,
-    );
-    gridImages.push(grid3x3);
-
-    // Step 9: Generate product info
+    // Step 8: Generate product info
     report('AI 正在分析产品信息...');
     let info;
     if (hasGeminiAccess()) {
