@@ -4,6 +4,7 @@ import { ArrowLeft, Edit3, Trash2, Download, Save, Check, X } from 'lucide-react
 import { getProduct, updateProduct, deleteProduct } from '../services/productService';
 import { exportProductsWithImages } from '../services/exportService';
 import ImagePreview from '../components/ImagePreview';
+import PlatformExport from '../components/PlatformExport';
 import ProductForm from '../components/ProductForm';
 import { formatDate, formatPrice } from '../utils/helpers';
 import type { Product, ProductAttribute } from '../types';
@@ -237,6 +238,11 @@ export default function ProductDetail() {
                         </>
                     )}
                 </div>
+            </div>
+
+            {/* 多平台上架参数 */}
+            <div className="card" style={{ marginTop: 'var(--space-lg)' }}>
+                <PlatformExport product={product} />
             </div>
         </div>
     );

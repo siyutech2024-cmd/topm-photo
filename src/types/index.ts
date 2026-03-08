@@ -3,6 +3,37 @@ export interface ProductAttribute {
   value: string;
 }
 
+// SKU 变体 (颜色+尺码组合)
+export interface ProductVariant {
+  color: string;
+  size: string;
+  sku_code: string;
+  price: number;
+  stock: number;
+  weight_g: number;        // 重量(克)
+  length_cm?: number;
+  width_cm?: number;
+  height_cm?: number;
+}
+
+// 平台参数生成结果
+export type PlatformType = 'shein' | 'tiktok' | 'temu';
+
+export interface PlatformFieldStatus {
+  field: string;
+  label: string;
+  value: unknown;
+  status: 'filled' | 'missing' | 'estimated';
+  required: boolean;
+}
+
+export interface PlatformParamsResult {
+  platform: PlatformType;
+  params: Record<string, unknown>;
+  fields: PlatformFieldStatus[];
+  generated_at: string;
+}
+
 export interface Product {
   id?: string;          // UUID from Supabase
   title: string;
@@ -18,6 +49,15 @@ export interface Product {
   status: 'draft' | 'generated' | 'published';
   created_at: string;
   updated_at: string;
+  // 多平台上架扩展字段 (可选)
+  variants?: ProductVariant[];
+  weight_g?: number;
+  package_length_cm?: number;
+  package_width_cm?: number;
+  package_height_cm?: number;
+  // SHEIN AI 自动匹配 (可选)
+  shein_category_id?: number;
+  shein_product_type_id?: number;
 }
 
 export interface GenerationResult {
@@ -29,6 +69,9 @@ export interface GenerationResult {
   price: number;
   category: string;
   attributes: ProductAttribute[];
+  // SHEIN AI 自动匹配
+  shein_category_id?: number;
+  shein_product_type_id?: number;
 }
 
 export interface ExportOptions {

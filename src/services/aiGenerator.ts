@@ -1,4 +1,5 @@
 import type { GenerationResult, ProductAttribute } from '../types';
+import { getCategoryListForAI } from './sheinCacheService';
 
 /**
  * AI 产品内容生成服务
@@ -238,7 +239,28 @@ async function generateProductInfoWithGemini(sourceImages: string[]): Promise<{
     price: number;
     category: string;
     attributes: ProductAttribute[];
+    shein_category_id?: number;
+    shein_product_type_id?: number;
 }> {
+    // 尝试加载本地 SHEIN 类目列表
+    let sheinCategoryBlock = '';
+    try {
+        const catList = await getCategoryListForAI();
+        if (catList) {
+            sheinCategoryBlock = `\n\nAdemás, tienes acceso a las siguientes categorías reales de SHEIN (formato: categoryId|productTypeId|ruta):
+---SHEIN_CATEGORIES_START---
+${catList}
+---SHEIN_CATEGORIES_END---
+
+Debes elegir la categoría SHEIN que MEJOR coincida con este producto y devolver los campos adicionales:
+  "shein_category_id": número (el categoryId de la lista anterior),
+  "shein_product_type_id": número (el productTypeId de la lista anterior),
+Si ninguna categoría coincide, pon 0 en ambos campos.`;
+        }
+    } catch {
+        // Sin categorías locales, skip
+    }
+
     const contents: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
         {
             text: `Eres un experto profesional en operaciones de productos de e-commerce. Observa cuidadosamente estas imágenes del producto y genera la información completa del producto en ESPAÑOL.
@@ -249,7 +271,7 @@ Devuelve ESTRICTAMENTE en el siguiente formato JSON, sin ningún otro texto ni m
   "title": "Título del producto (10-20 palabras, incluir puntos de venta clave y palabras clave)",
   "description": "Descripción detallada del producto (80-150 palabras, incluir características, materiales, escenarios de uso, ventajas, etc.)",
   "price": número (precio de mercado razonable en USD, sin símbolo de moneda),
-  "category": "Categoría del producto (elegir de: Electrónica, Ropa y Calzado, Hogar y Muebles, Belleza y Cuidado Personal, Alimentos y Bebidas, Deportes y Aire Libre, Bebés y Juguetes, Libros y Papelería, Joyería y Accesorios, Automotriz, Otros)",
+  "category": "Categoría del producto (elegir de: Electrónica, Ropa y Calzado, Hogar y Muebles, Belleza y Cuidado Personal, Alimentos y Bebidas, Deportes y Aire Libre, Bebés y Juguetes, Libros y Papelería, Joyería y Accesorios, Automotriz, Otros)",${sheinCategoryBlock ? '\n  "shein_category_id": número (de la lista de categorías SHEIN proporcionada),\n  "shein_product_type_id": número (de la lista de categorías SHEIN proporcionada),' : ''}
   "attributes": [
     {"key": "Marca", "value": "marca identificada o estimada"},
     {"key": "Material", "value": "material del producto"},
@@ -266,7 +288,7 @@ Requisitos:
 1. El título debe ser atractivo, incluir los puntos de venta principales
 2. La descripción debe ser detallada y profesional, destacando las ventajas del producto
 3. El precio debe ser acorde al mercado para este tipo de producto (en USD)
-4. Los atributos deben ser lo más precisos posible, basados en el contenido de las imágenes`,
+4. Los atributos deben ser lo más precisos posible, basados en el contenido de las imágenes${sheinCategoryBlock}`,
         },
     ];
 
@@ -299,6 +321,8 @@ Requisitos:
         price: typeof parsed.price === 'number' ? parsed.price : parseFloat(parsed.price) || 99.9,
         category: parsed.category || 'Otros',
         attributes: Array.isArray(parsed.attributes) ? parsed.attributes : [],
+        shein_category_id: parsed.shein_category_id || undefined,
+        shein_product_type_id: parsed.shein_product_type_id || undefined,
     };
 }
 

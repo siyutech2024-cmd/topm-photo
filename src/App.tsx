@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import CreateProduct from './pages/CreateProduct';
 import ProductList from './pages/ProductList';
 import ProductDetail from './pages/ProductDetail';
+import JsonGenerator from './pages/JsonGenerator';
 import Settings from './pages/Settings';
 import TaskQueue from './components/TaskQueue';
 
@@ -16,6 +17,7 @@ function App() {
           <Route path="/create" element={<CreateProduct />} />
           <Route path="/products" element={<ProductList />} />
           <Route path="/products/:id" element={<ProductDetail />} />
+          <Route path="/json-generator" element={<JsonGenerator />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>

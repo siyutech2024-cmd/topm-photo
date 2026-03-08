@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ImagePlus, Package, Settings, Sparkles } from 'lucide-react';
+import { LayoutDashboard, ImagePlus, Package, Settings, Sparkles, FileJson } from 'lucide-react';
 
 export default function Sidebar() {
     return (
@@ -32,6 +32,10 @@ export default function Sidebar() {
                     <NavLink to="/products" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                         <Package />
                         <span>产品管理</span>
+                    </NavLink>
+                    <NavLink to="/json-generator" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                        <FileJson />
+                        <span>数据生成</span>
                     </NavLink>
                 </div>
 
