@@ -31,17 +31,20 @@ export interface SheinAttribute {
     values?: { value_id: number; value_name: string }[];
 }
 
+// ===== 与成功上架 JSON 完全一致的类型定义 =====
+
 export interface SheinPublishJson {
-    category_id: number;
-    product_type_id?: number;
-    source_system: string;
-    suit_flag: string;
     brand_code: string;
+    category_id: number;
+    product_type_id: number;
+    source_system: string;                 // "openapi" (小写)
+    suit_flag: number;                     // 0 (数字,不是字符串)
+    supplier_code: string;                 // 顶层 SPU 代码
     multi_language_name_list: { language: string; name: string }[];
-    multi_language_desc_list: { language: string; name: string }[];  // SHEIN API 用 name 不是 desc
+    multi_language_desc_list: { language: string; name: string }[];
     product_attribute_list: {
-        attribute_id: number;
-        attribute_value_id: number;
+        attribute_id: string;              // 字符串!
+        attribute_value_id?: string;       // 字符串!
         attribute_extra_value?: string;
     }[];
     site_list: {
@@ -49,45 +52,33 @@ export interface SheinPublishJson {
         sub_site_list: string[];
     }[];
     skc_list: {
-        supplier_code: string;
         sale_attribute: {
-            attribute_id: number;
+            attribute_id: string;
             attribute_value_id: number;
             custom_attribute_value?: string;
-            language?: string;
-        };
-        image_info: {
-            image_info_list: {
-                image_sort: number;
-                image_type: number;    // 1=主图, 2=细节图, 5=方块图, 6=色块图
-                image_url: string;
-            }[];
         };
         sku_list: {
             supplier_sku: string;
-            mall_state: number;        // 1=上架, 2=下架
-            weight: number;            // 克
-            length: string;            // cm (字符串)
-            width: string;             // cm (字符串)
-            height: string;            // cm (字符串)
+            mall_state: number;
+            weight: number;
+            length: number;                // 数字!
+            width: number;                 // 数字!
+            height: number;                // 数字!
+            stop_purchase: number;
             cost_info: {
                 cost_price: string;
                 currency: string;
             };
-            price_info_list: {
-                base_price: number;
-                currency: string;
-                sub_site: string;
-            }[];
             stock_info_list: {
-                inventory_num: number;
-                supplier_warehouse_id?: string;
+                inventory_num: string;     // 字符串!
             }[];
             sale_attribute_list: {
-                attribute_id: number;
-                attribute_value_id: number;
+                attribute_id: string;
+                attribute_value_id: string;
             }[];
         }[];
+        shelf_require: string;
+        shelf_way: string;
     }[];
 }
 
@@ -265,10 +256,10 @@ export interface BuildJsonOptions {
 export function buildSheinJson(product: Product, options: BuildJsonOptions): SheinPublishJson {
     const weight = estimateWeight(product);
     const dims = estimateDims(product);
-    const subSite = options.subSite || 'rwmmx';       // 墨西哥站点
+    const subSite = options.subSite || 'shein-mx';     // 墨西哥站点（不是 rwmmx）
     const mainSite = options.mainSite || 'shein';
-    const costPrice = options.costPrice || (product.price * 0.4).toFixed(2);  // 默认估算成本
-    const costCurrency = options.costCurrency || 'USD';
+    const costPrice = options.costPrice || String(product.price.toFixed(2));  // 成本 = 售价
+    const costCurrency = options.costCurrency || 'MXN';
 
     const variants = product.variants && product.variants.length > 0
         ? product.variants
@@ -282,7 +273,6 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
         }];
 
     // ---------- 自动匹配销售属性 ----------
-    // SKC 级主属性（颜色）：从属性模板中找 type=1, label=1 的属性
     let resolvedSaleAttribute = options.saleAttribute;
     if (!resolvedSaleAttribute && options.allAttributes) {
         const matched = autoMatchSaleAttribute(
@@ -296,7 +286,7 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
         custom_attribute_value: getAttr(product, 'Color') || 'Por defecto',
     };
 
-    // SKU 级属性（尺码）：从属性模板中找 type=1 (label=0) 或 type=2
+    // SKU 级属性（尺码）
     let resolvedSkuSaleAttrs = options.skuSaleAttributes;
     if (!resolvedSkuSaleAttrs && options.allAttributes) {
         resolvedSkuSaleAttrs = autoMatchSkuSaleAttributes(
@@ -304,59 +294,66 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
         );
     }
 
+    // SPU 代码（取第一个 variant 的 sku_code）
+    const supplierCode = variants[0]?.sku_code || `TOPM-${product.id?.slice(0, 8) || 'DRAFT'}`;
+
     const skcList = variants.map(v => ({
-        supplier_code: v.sku_code || `TOPM-${product.id?.slice(0, 8)}`,
         sale_attribute: {
-            attribute_id: defaultSaleAttribute.attribute_id,
+            attribute_id: String(defaultSaleAttribute.attribute_id),
             attribute_value_id: defaultSaleAttribute.attribute_value_id,
             ...(defaultSaleAttribute.custom_attribute_value
                 ? { custom_attribute_value: defaultSaleAttribute.custom_attribute_value }
                 : {}),
         },
-        image_info: {
-            image_info_list: options.imageUrls.slice(0, 5).map((url, idx) => ({
-                image_sort: idx + 1,
-                image_type: idx === 0 ? 1 : 2,   // 1=主图, 2=细节图
-                image_url: url,
-            })),
-        },
         sku_list: [{
-            supplier_sku: `${v.sku_code || 'TOPM'}-${v.size || 'OS'}`,
-            mall_state: 1,                         // 1=上架
+            supplier_sku: v.sku_code || supplierCode,
+            mall_state: 1,
             weight: v.weight_g || weight,
-            length: String(dims.l),                 // SHEIN 要求字符串
-            width: String(dims.w),
-            height: String(dims.h),
+            length: dims.l,                            // 数字（不是字符串）
+            width: dims.w,
+            height: dims.h,
+            stop_purchase: 1,
             cost_info: {
                 cost_price: costPrice,
                 currency: costCurrency,
             },
-            price_info_list: [{
-                base_price: v.price || product.price,
-                currency: 'USD',
-                sub_site: subSite,
-            }],
+            // 注意：成功上架的 JSON 没有 price_info_list！
             stock_info_list: [{
-                inventory_num: v.stock || 100,
-                ...(options.warehouseId ? { supplier_warehouse_id: options.warehouseId } : {}),
+                inventory_num: String(v.stock || 100),  // 字符串！
             }],
-            sale_attribute_list: resolvedSkuSaleAttrs || [],
+            sale_attribute_list: (resolvedSkuSaleAttrs || []).map(a => ({
+                attribute_id: String(a.attribute_id),
+                attribute_value_id: String(a.attribute_value_id),
+            })),
         }],
+        shelf_require: '0',
+        shelf_way: '1',
+    }));
+
+    // 清理属性：转为字符串 ID，移除内部显示字段
+    const cleanAttributes = options.matchedAttributes.map(a => ({
+        attribute_id: String(a.attribute_id),
+        ...(a.attribute_extra_value
+            ? { attribute_extra_value: a.attribute_extra_value }
+            : { attribute_value_id: String(a.attribute_value_id) }),
     }));
 
     return {
+        brand_code: '',
         category_id: options.categoryId,
         product_type_id: options.productTypeId,
-        source_system: 'OpenAPI',
-        suit_flag: '0',
-        brand_code: '',
+        source_system: 'openapi',                      // 小写！
+        suit_flag: 0,                                  // 数字！
+        supplier_code: supplierCode,                   // 顶层 SPU 代码
         multi_language_name_list: [
             { language: 'es', name: product.title },
+            { language: 'zh-cn', name: product.title },  // 复制一份 zh-cn
         ],
         multi_language_desc_list: [
-            { language: 'es', name: product.description },   // SHEIN API 用 name
+            { language: 'es', name: product.description },
+            { language: 'zh-cn', name: product.description },
         ],
-        product_attribute_list: options.matchedAttributes,
+        product_attribute_list: cleanAttributes,
         site_list: [{
             main_site: mainSite,
             sub_site_list: [subSite],
@@ -367,17 +364,44 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
 
 // ===== 文件下载 =====
 
-export function downloadJsonFile(data: unknown, filename: string) {
+export async function downloadJsonFile(data: unknown, filename: string) {
     const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
+
+    // 优先使用 File System Access API —— 弹出系统原生"另存为"对话框
+    if ('showSaveFilePicker' in window) {
+        try {
+            const handle = await (window as unknown as { showSaveFilePicker: (opts: unknown) => Promise<FileSystemFileHandle> })
+                .showSaveFilePicker({
+                    suggestedName: filename,
+                    types: [{
+                        description: 'JSON 文件',
+                        accept: { 'application/json': ['.json'] },
+                    }],
+                });
+            const writable = await handle.createWritable();
+            await writable.write(json);
+            await writable.close();
+            return;
+        } catch (e) {
+            // 用户取消了保存对话框
+            if ((e as Error).name === 'AbortError') return;
+            // API 失败则 fallback
+        }
+    }
+
+    // Fallback: Blob URL（旧浏览器）
+    const file = new File([json], filename, { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(file);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
+    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 60000);
 }
 
 // ===== AI 销售属性自动匹配 =====
@@ -562,23 +586,43 @@ export function autoMatchSkuSaleAttributes(
 
 // ===== AI 商品属性匹配 =====
 
-/** 使用简单名称匹配将产品属性映射到模板属性（输出格式符合 SHEIN API） */
+/** 使用简单名称匹配将产品属性映射到模板属性（输出格式符合 SHEIN API）
+ *  增强：对未匹配的必填属性(req=true)，自动选择 fallback 值
+ */
 export function autoMatchAttributes(
     productAttrs: { key: string; value: string }[],
     templateAttrs: SheinAttribute[]
 ): { attribute_id: number; attribute_value_id: number; attribute_extra_value?: string; _display_name?: string; _display_value?: string }[] {
     const matched: { attribute_id: number; attribute_value_id: number; attribute_extra_value?: string; _display_name?: string; _display_value?: string }[] = [];
+    const matchedIds = new Set<number>();
+
+    // 关键词映射：产品属性英文/西班牙文 → 可能的模板属性名
+    const keywordMap: Record<string, string[]> = {
+        'material': ['composition', 'other materials', 'materials'],
+        'Material': ['Composition', 'Other Materials'],
+        'Marca': ['Brand'],
+        'Color': ['Color'],
+        'Peso': ['Weight'],
+        'Dimensiones': ['Dimensions'],
+    };
 
     for (const tAttr of templateAttrs) {
         // 只处理类型 3 (成分) 和 4 (普通) 的属性
         if (tAttr.attribute_type !== 3 && tAttr.attribute_type !== 4) continue;
 
-        // 查找产品中名称相似的属性
-        const pAttr = productAttrs.find(p =>
-            p.key.toLowerCase() === tAttr.attribute_name.toLowerCase() ||
-            p.key.toLowerCase().includes(tAttr.attribute_name.toLowerCase()) ||
-            tAttr.attribute_name.toLowerCase().includes(p.key.toLowerCase())
-        );
+        // 查找产品中名称相似的属性（包括跨语言映射）
+        const pAttr = productAttrs.find(p => {
+            const pk = p.key.toLowerCase();
+            const tk = tAttr.attribute_name.toLowerCase();
+            // 直接名称匹配
+            if (pk === tk || pk.includes(tk) || tk.includes(pk)) return true;
+            // 关键词映射匹配
+            const mappedKeys = keywordMap[p.key] || keywordMap[pk];
+            if (mappedKeys) {
+                return mappedKeys.some(mk => tk.includes(mk.toLowerCase()));
+            }
+            return false;
+        });
 
         if (pAttr && tAttr.values && tAttr.values.length > 0) {
             // 尝试匹配属性值
@@ -592,10 +636,57 @@ export function autoMatchAttributes(
                 matched.push({
                     attribute_id: tAttr.attribute_id,
                     attribute_value_id: matchedValue.value_id,
-                    _display_name: tAttr.attribute_name,     // 仅用于 UI 显示
-                    _display_value: matchedValue.value_name,  // 仅用于 UI 显示
+                    _display_name: tAttr.attribute_name,
+                    _display_value: matchedValue.value_name,
                 });
+                matchedIds.add(tAttr.attribute_id);
             }
+        }
+    }
+
+    // 补齐必填属性：对未匹配的 req=true 属性，尝试 fallback
+    const fallbackNames = ['other', 'unspecified', 'n/a', 'none', 'not applicable', 'desconocido'];
+    // 特定属性的智能默认值
+    const smartDefaults: Record<number, string[]> = {
+        1000565: ['non-foaming', 'non'],          // It's foam → Non-Foaming
+        1000411: [],                                // Quantity → 取第一个
+        1000062: [],                                // Weaving method → 取第一个
+    };
+
+    for (const tAttr of templateAttrs) {
+        if (tAttr.attribute_type !== 3 && tAttr.attribute_type !== 4) continue;
+        if (matchedIds.has(tAttr.attribute_id)) continue;
+        if (!tAttr.is_required) continue;
+        if (!tAttr.values || tAttr.values.length === 0) continue;
+
+        // 1. 查找 "Other"/"Unspecified" 等通用 fallback
+        let fallback = tAttr.values.find(v =>
+            fallbackNames.some(fn => v.value_name.toLowerCase().includes(fn))
+        );
+
+        // 2. 查找特定属性的智能默认值
+        if (!fallback && smartDefaults[tAttr.attribute_id]) {
+            const hints = smartDefaults[tAttr.attribute_id];
+            if (hints.length > 0) {
+                fallback = tAttr.values.find(v =>
+                    hints.some(h => v.value_name.toLowerCase().includes(h))
+                );
+            }
+        }
+
+        // 3. 最终 fallback：取第一个值
+        if (!fallback) {
+            fallback = tAttr.values[0];
+        }
+
+        if (fallback) {
+            matched.push({
+                attribute_id: tAttr.attribute_id,
+                attribute_value_id: fallback.value_id,
+                _display_name: tAttr.attribute_name,
+                _display_value: `${fallback.value_name} (自动)`,
+            });
+            matchedIds.add(tAttr.attribute_id);
         }
     }
 

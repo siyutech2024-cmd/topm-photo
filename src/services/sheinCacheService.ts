@@ -276,15 +276,14 @@ export async function exportAttributesToFile(): Promise<void> {
     }));
 
     const json = JSON.stringify(exportData);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
+    const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = 'shein_attributes.json';
+    a.setAttribute('href', dataUri);
+    a.setAttribute('download', 'shein_attributes.json');
+    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => document.body.removeChild(a), 500);
 }
 
 /**
@@ -312,7 +311,7 @@ export async function loadBundledAttributes(
 
     try {
         const resp = await import('../data/shein_attributes.json');
-        rawData = resp.default || resp;
+        rawData = (resp.default || resp) as typeof rawData;
     } catch {
         onProgress?.('⚠️ 未找到本地属性文件 (src/data/shein_attributes.json)');
         return 0;
@@ -357,16 +356,49 @@ export async function getLocalCategories(): Promise<CachedCategory[]> {
 }
 
 export async function getLocalAttributes(productTypeId: number): Promise<SheinAttribute[]> {
+    // 1. 先从 IndexedDB 查找
     const db = await openDB();
-    return new Promise((resolve, reject) => {
+    const cached = await new Promise<CachedAttributeSet | undefined>((resolve, reject) => {
         const tx = db.transaction(STORE_ATTRIBUTES, 'readonly');
         const req = tx.objectStore(STORE_ATTRIBUTES).get(productTypeId);
-        req.onsuccess = () => {
-            const result = req.result as CachedAttributeSet | undefined;
-            resolve(result?.attributes || []);
-        };
+        req.onsuccess = () => resolve(req.result as CachedAttributeSet | undefined);
         req.onerror = () => reject(req.error);
     });
+
+    if (cached?.attributes?.length) {
+        return cached.attributes;
+    }
+
+    // 2. IndexedDB 没有 → 从打包文件加载
+    try {
+        const resp = await import('../data/shein_attributes.json');
+        const rawData: Array<{
+            ptId: number;
+            attrs: Array<{
+                id: number; name: string; type: number;
+                label: number; mode: number; req: boolean;
+                vals: Array<{ id: number; name: string }>;
+            }>;
+        }> = resp.default || resp;
+
+        const item = rawData.find(d => d.ptId === productTypeId);
+        if (!item) return [];
+
+        return item.attrs.map(a => ({
+            attribute_id: a.id,
+            attribute_name: a.name,
+            attribute_type: a.type,
+            attribute_label: a.label ?? 0,
+            attribute_mode: a.mode ?? 1,
+            is_required: a.req,
+            values: (a.vals || []).map(v => ({
+                value_id: v.id,
+                value_name: v.name,
+            })),
+        }));
+    } catch {
+        return [];
+    }
 }
 
 export async function getLastSyncTime(): Promise<string | null> {
@@ -401,14 +433,13 @@ export async function clearAllCache(): Promise<void> {
 /** 
  * 从本地类目中提取用于 AI prompt 的摘要列表
  * 返回格式: "categoryId|productTypeId|完整路径"
- * 限制前 200 条以控制 token 量
+ * 发送全部类目（Gemini 2.0 Flash 支持 100 万 token，类目列表仅约 5000 tokens）
  */
 export async function getCategoryListForAI(): Promise<string> {
     const cats = await getLocalCategories();
     if (cats.length === 0) return '';
 
     return cats
-        .slice(0, 200)
         .map(c => `${c.categoryId}|${c.productTypeId}|${c.label}`)
         .join('\n');
 }
@@ -416,6 +447,7 @@ export async function getCategoryListForAI(): Promise<string> {
 /**
  * 根据产品关键词从本地搜索匹配类目
  * 用于 AI 匹配不到时的 fallback
+ * 最低分数门槛 >= 3，避免弱匹配导致错误分类
  */
 export function searchLocalCategories(
     categories: CachedCategory[],
@@ -433,7 +465,7 @@ export function searchLocalCategories(
             }
             return { cat, score };
         })
-        .filter(x => x.score > 0)
+        .filter(x => x.score >= 3)   // 最低分数门槛，避免弱匹配
         .sort((a, b) => b.score - a.score)
         .slice(0, 10)
         .map(x => x.cat);
