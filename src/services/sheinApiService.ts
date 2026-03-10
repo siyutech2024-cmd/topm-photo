@@ -343,49 +343,51 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
         }];
 
     // ---------- 自动匹配销售属性 ----------
-    // mainAttrStatus=3 表示此类目已禁用主规格
-    // SHEIN API 仍要求 sale_attribute 非空，但不能用自定义值（不支持新增属性值）
-    // 策略：使用 type=1 属性的第一个标准值
+    // mainAttrStatus=3 = 此类目禁用主规格（SHEIN后台「无主规格」选项）
+    //
+    // SHEIN后台行为：无主规格 → 默认生成1个SKC，不支持复色，仅支持加码
+    //
+    // 策略：
+    //   1. 有 status!=3 的 type=1 属性 → 作为 sale_attribute（如 Model）
+    //   2. 全部 type=1 都 status=3 → 真正的「无主规格」，不发 sale_attribute
+    //   3. mainAttrStatus!=3 → 正常流程（autoMatch）
     const mainSpecDisabled = options.mainAttrStatus === 3;
 
     let resolvedSaleAttribute = options.saleAttribute;
-    if (!mainSpecDisabled && !resolvedSaleAttribute && options.allAttributes) {
+    let noMainSpec = false; // 真正的「无主规格」标记
+
+    if (mainSpecDisabled) {
+        if (options.allAttributes) {
+            // 优先找 status!=3 的 type=1 属性
+            const enabledSaleAttr = options.allAttributes.find(
+                a => a.attribute_type === 1 && a.attribute_status !== 3 && a.values && a.values.length > 0
+            );
+            if (enabledSaleAttr) {
+                resolvedSaleAttribute = {
+                    attribute_id: enabledSaleAttr.attribute_id,
+                    attribute_value_id: enabledSaleAttr.values![0].value_id,
+                };
+            } else {
+                // 全部 type=1 都禁用 → 真正的「无主规格」
+                noMainSpec = true;
+            }
+        } else {
+            noMainSpec = true;
+        }
+    } else if (!resolvedSaleAttribute && options.allAttributes) {
         const matched = autoMatchSaleAttribute(
             product.attributes, options.allAttributes
         );
         if (matched) resolvedSaleAttribute = matched;
     }
 
-    // 主规格禁用时：优先选 type=1 且 status!=3（启用）的属性
-    let defaultSaleAttribute: { attribute_id: number; attribute_value_id: number; custom_attribute_value?: string };
-    if (mainSpecDisabled && options.allAttributes) {
-        // 优先找 status!=3 的 type=1 属性（可用作主规格）
-        const enabledSaleAttr = options.allAttributes.find(
-            a => a.attribute_type === 1 && a.attribute_status !== 3 && a.values && a.values.length > 0
-        );
-        if (enabledSaleAttr) {
-            defaultSaleAttribute = {
-                attribute_id: enabledSaleAttr.attribute_id,
-                attribute_value_id: enabledSaleAttr.values![0].value_id,
-            };
-        } else {
-            // 全部 type=1 都禁用，用第一个 type=1 的第一个标准值（最后手段）
-            const anySaleAttr = options.allAttributes.find(
-                a => a.attribute_type === 1 && a.values && a.values.length > 0
-            );
-            defaultSaleAttribute = anySaleAttr
-                ? { attribute_id: anySaleAttr.attribute_id, attribute_value_id: anySaleAttr.values![0].value_id }
-                : { attribute_id: 0, attribute_value_id: 0 };
-        }
-    } else {
-        defaultSaleAttribute = resolvedSaleAttribute || {
-            attribute_id: 0,
-            attribute_value_id: 0,
-            custom_attribute_value: getAttr(product, 'Color') || 'Por defecto',
-        };
-    }
+    const defaultSaleAttribute = resolvedSaleAttribute || {
+        attribute_id: 0,
+        attribute_value_id: 0,
+        custom_attribute_value: getAttr(product, 'Color') || 'Por defecto',
+    };
 
-    // SKU 级属性（尺码）— 主规格禁用时不发
+    // SKU 级属性（尺码）— 无主规格时不发
     let resolvedSkuSaleAttrs = options.skuSaleAttributes;
     if (!mainSpecDisabled && !resolvedSkuSaleAttrs && options.allAttributes) {
         resolvedSkuSaleAttrs = autoMatchSkuSaleAttributes(
@@ -412,8 +414,8 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
             stock_info_list: [{
                 inventory_num: String(v.stock || 100),
             }],
-            // 主规格禁用时不发 sale_attribute_list
-            ...(!mainSpecDisabled ? {
+            // 无主规格时不发 sale_attribute_list
+            ...(!noMainSpec && !mainSpecDisabled ? {
                 sale_attribute_list: (resolvedSkuSaleAttrs || [])
                     .filter(a => String(a.attribute_id) !== String(defaultSaleAttribute.attribute_id))
                     .map(a => ({
@@ -424,14 +426,16 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
         };
 
         return {
-            // sale_attribute 始终发送（API 要求非空）
-            sale_attribute: {
-                attribute_id: String(defaultSaleAttribute.attribute_id),
-                attribute_value_id: defaultSaleAttribute.attribute_value_id,
-                ...(defaultSaleAttribute.custom_attribute_value
-                    ? { custom_attribute_value: defaultSaleAttribute.custom_attribute_value }
-                    : {}),
-            },
+            // 无主规格时不发 sale_attribute（SHEIN后台行为：默认1个SKC）
+            ...(!noMainSpec ? {
+                sale_attribute: {
+                    attribute_id: String(defaultSaleAttribute.attribute_id),
+                    attribute_value_id: defaultSaleAttribute.attribute_value_id,
+                    ...(defaultSaleAttribute.custom_attribute_value
+                        ? { custom_attribute_value: defaultSaleAttribute.custom_attribute_value }
+                        : {}),
+                },
+            } : {}),
             sku_list: [skuEntry],
             shelf_require: '0' as const,
             shelf_way: '1' as const,
