@@ -425,6 +425,7 @@ export async function getLocalAttributes(productTypeId: number): Promise<SheinAt
             attrs: Array<{
                 id: number; name: string; type: number;
                 label: number; mode: number; req: boolean;
+                status?: number;
                 vals: Array<{ id: number; name: string }>;
             }>;
         }>;
@@ -437,6 +438,7 @@ export async function getLocalAttributes(productTypeId: number): Promise<SheinAt
                 attribute_type: a.type,
                 attribute_label: a.label ?? 0,
                 attribute_mode: a.mode ?? 1,
+                attribute_status: a.status,
                 is_required: a.req,
                 values: (a.vals || []).map(v => ({
                     value_id: v.id,

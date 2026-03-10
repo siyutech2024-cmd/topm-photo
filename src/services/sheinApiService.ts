@@ -27,6 +27,7 @@ export interface SheinAttribute {
     attribute_type: number; // 1=销售, 2=尺寸, 3=成分, 4=普通
     attribute_label: number; // 1=SKC主销售属性(如颜色), 0=其他
     attribute_mode: number;  // 0=手动输入, 1=下拉单选, 3=下拉多选, 4=手动+下拉
+    attribute_status?: number; // 2=活跃, 3=禁用
     is_required: boolean;
     values?: { value_id: number; value_name: string }[];
 }
@@ -355,18 +356,26 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
         if (matched) resolvedSaleAttribute = matched;
     }
 
-    // 主规格禁用时：从模板中找第一个 type=1 属性，使用其第一个标准值
+    // 主规格禁用时：优先选 type=1 且 status!=3（启用）的属性
     let defaultSaleAttribute: { attribute_id: number; attribute_value_id: number; custom_attribute_value?: string };
     if (mainSpecDisabled && options.allAttributes) {
-        const saleAttr = options.allAttributes.find(a => a.attribute_type === 1 && a.values && a.values.length > 0);
-        if (saleAttr) {
+        // 优先找 status!=3 的 type=1 属性（可用作主规格）
+        const enabledSaleAttr = options.allAttributes.find(
+            a => a.attribute_type === 1 && a.attribute_status !== 3 && a.values && a.values.length > 0
+        );
+        if (enabledSaleAttr) {
             defaultSaleAttribute = {
-                attribute_id: saleAttr.attribute_id,
-                attribute_value_id: saleAttr.values![0].value_id,
+                attribute_id: enabledSaleAttr.attribute_id,
+                attribute_value_id: enabledSaleAttr.values![0].value_id,
             };
         } else {
-            // 没有 type=1 属性，用 0 占位（极少数情况）
-            defaultSaleAttribute = { attribute_id: 0, attribute_value_id: 0 };
+            // 全部 type=1 都禁用，用第一个 type=1 的第一个标准值（最后手段）
+            const anySaleAttr = options.allAttributes.find(
+                a => a.attribute_type === 1 && a.values && a.values.length > 0
+            );
+            defaultSaleAttribute = anySaleAttr
+                ? { attribute_id: anySaleAttr.attribute_id, attribute_value_id: anySaleAttr.values![0].value_id }
+                : { attribute_id: 0, attribute_value_id: 0 };
         }
     } else {
         defaultSaleAttribute = resolvedSaleAttribute || {
