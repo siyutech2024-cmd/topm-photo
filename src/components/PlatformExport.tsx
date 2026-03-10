@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Copy, Check, AlertTriangle, CheckCircle, HelpCircle, RefreshCw, ChevronDown, ChevronUp, ExternalLink, Download, Search, Plus, X, Loader } from 'lucide-react';
 import { generatePlatformParams, exportParamsAsJson, copyToClipboard, getFieldSummary, getCategoriesForPlatform } from '../services/platformService';
 import { fetchAttributes, buildSheinJson, autoMatchAttributes, autoMatchSaleAttribute, autoMatchSkuSaleAttributes, downloadJsonFile, transformImageUrls } from '../services/sheinApiService';
-import { getLocalCategories, getLocalAttributes, searchLocalCategories, getCacheStats } from '../services/sheinCacheService';
+import { getLocalCategories, getLocalAttributes, getLocalMainAttrStatus, searchLocalCategories, getCacheStats } from '../services/sheinCacheService';
 import type { Product, PlatformType, PlatformParamsResult } from '../types';
 import type { SheinAttribute } from '../services/sheinApiService';
 import type { CachedCategory } from '../services/sheinCacheService';
@@ -34,6 +34,7 @@ function SheinPanel({ product }: Props) {
     const [allAttrs, setAllAttrs] = useState<import('../services/sheinApiService').SheinAttribute[]>([]);
     const [matchedSaleAttr, setMatchedSaleAttr] = useState<{ attribute_id: number; attribute_value_id: number; custom_attribute_value?: string; _display_name?: string; _display_value?: string } | null>(null);
     const [matchedSkuSaleAttrs, setMatchedSkuSaleAttrs] = useState<{ attribute_id: number; attribute_value_id: number; _display_name?: string; _display_value?: string }[]>([]);
+    const [mainAttrStatus, setMainAttrStatus] = useState<number | undefined>(undefined);
     const [loadingAttrs, setLoadingAttrs] = useState(false);
 
     // 图片
@@ -90,9 +91,10 @@ function SheinPanel({ product }: Props) {
             // 先从本地读取
             let attrs = await getLocalAttributes(productTypeId);
             if (attrs.length === 0) {
-                // 本地没有则从 API 拉取
                 attrs = await fetchAttributes(productTypeId);
             }
+            const mas = await getLocalMainAttrStatus(productTypeId);
+            setMainAttrStatus(mas);
             setAttributes(attrs);
             setAllAttrs(attrs);
             const matched = autoMatchAttributes(product.attributes, attrs);
@@ -166,6 +168,7 @@ function SheinPanel({ product }: Props) {
             allAttributes: allAttrs,
             saleAttribute: matchedSaleAttr || undefined,
             skuSaleAttributes: matchedSkuSaleAttrs.length > 0 ? matchedSkuSaleAttrs : undefined,
+            mainAttrStatus: mainAttrStatus,
         });
         setGeneratedJson(json as unknown as Record<string, unknown>);
         setShowJson(false);

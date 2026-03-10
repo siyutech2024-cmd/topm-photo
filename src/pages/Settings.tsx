@@ -1,6 +1,6 @@
 import { HardDrive, Info, ExternalLink, Trash2, RefreshCw, Database } from 'lucide-react';
 import { clearAllProducts } from '../services/productService';
-import { syncAll, getCacheStats, clearAllCache } from '../services/sheinCacheService';
+import { syncAll, syncMainAttrStatusOnly, getCacheStats, clearAllCache } from '../services/sheinCacheService';
 import { useState, useEffect } from 'react';
 
 export default function Settings() {
@@ -100,12 +100,26 @@ export default function Settings() {
                         </p>
                     )}
 
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <button className="btn btn-primary btn-sm" onClick={handleSheinSync} disabled={syncing} style={{ flex: 1 }}>
-                            <RefreshCw size={14} className={syncing ? 'spin' : ''} /> {syncing ? '同步中...' : '同步 SHEIN 数据'}
+                            <RefreshCw size={14} className={syncing ? 'spin' : ''} /> {syncing ? '同步中...' : '完整同步'}
+                        </button>
+                        <button className="btn btn-secondary btn-sm" onClick={async () => {
+                            setSyncing(true);
+                            setSyncMsg('获取主规格状态...');
+                            try {
+                                const count = await syncMainAttrStatusOnly((msg) => setSyncMsg(msg));
+                                setSyncMsg(`✅ 已同步 ${count} 个 ptId 的主规格状态`);
+                            } catch (e) {
+                                setSyncMsg('❌ 同步失败: ' + (e instanceof Error ? e.message : '未知错误'));
+                            } finally {
+                                setSyncing(false);
+                            }
+                        }} disabled={syncing} style={{ flex: 1 }}>
+                            📊 {syncing ? '...' : '仅同步主规格'}
                         </button>
                         <button className="btn btn-secondary btn-sm" onClick={handleClearCache} disabled={syncing || cacheStats.categoryCount === 0}>
-                            <Trash2 size={14} /> 清空缓存
+                            <Trash2 size={14} /> 清空
                         </button>
                     </div>
 

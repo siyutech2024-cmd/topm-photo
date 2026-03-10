@@ -1,132 +1,15 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Upload, FileJson, Download, Copy, Check, Loader, AlertTriangle, CheckCircle, Search, ChevronDown, ChevronUp, Trash2, Clock, Eye } from 'lucide-react';
 import { getCategoryListForAI, loadBundledCategories } from '../services/sheinCacheService';
-import { getLocalCategories, getLocalAttributes, searchLocalCategories } from '../services/sheinCacheService';
+import { getLocalCategories, getLocalAttributes, getLocalMainAttrStatus, searchLocalCategories } from '../services/sheinCacheService';
 import { autoMatchAttributes, autoMatchSaleAttribute, autoMatchSkuSaleAttributes, buildSheinJson, downloadJsonFile } from '../services/sheinApiService';
+import { getTiktokLocalCategories, getTiktokLocalAttributes, searchTiktokCategories, getTiktokCategoryListForAI } from '../services/tiktokCacheService';
+import type { TiktokCachedCategory } from '../services/tiktokCacheService';
+import { autoMatchTiktokAttributes, autoMatchTiktokSaleAttribute, buildTiktokJson } from '../services/tiktokApiService';
 import { copyToClipboard } from '../services/platformService';
-import type { ProductAttribute } from '../types';
+import { hasGeminiAccess, callGeminiForProductInfo, callGeminiTextOnly } from '../services/geminiService';
+import type { ProductData } from '../services/geminiService';
 import type { CachedCategory } from '../services/sheinCacheService';
-
-// ===== Gemini AI 调用 =====
-
-const VITE_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
-
-function hasGeminiAccess(): boolean {
-    return !!(VITE_GEMINI_API_KEY || window.location.hostname !== 'localhost');
-}
-
-function extractBase64Data(dataUrl: string): string {
-    const idx = dataUrl.indexOf(',');
-    return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
-}
-
-function getMimeType(dataUrl: string): string {
-    const m = dataUrl.match(/^data:([^;]+)/);
-    return m ? m[1] : 'image/jpeg';
-}
-
-async function callGeminiForProductInfo(
-    images: string[],
-    sheinCategoryBlock: string
-): Promise<{
-    title: string;
-    description: string;
-    price: number;
-    category: string;
-    attributes: ProductAttribute[];
-    shein_category_id?: number;
-    shein_product_type_id?: number;
-}> {
-    const contents: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
-        {
-            text: `Eres un experto profesional en operaciones de productos de e-commerce. Observa cuidadosamente estas imágenes del producto y genera la información completa del producto en ESPAÑOL.
-
-Devuelve ESTRICTAMENTE en el siguiente formato JSON, sin ningún otro texto ni marcas markdown:
-
-{
-  "title": "Título del producto (10-20 palabras, incluir puntos de venta clave y palabras clave)",
-  "description": "Descripción detallada del producto (80-150 palabras, incluir características, materiales, escenarios de uso, ventajas, etc.)",
-  "price": número (precio de mercado razonable en USD, sin símbolo de moneda),
-  "category": "Categoría del producto (elegir de: Electrónica, Ropa y Calzado, Hogar y Muebles, Belleza y Cuidado Personal, Alimentos y Bebidas, Deportes y Aire Libre, Bebés y Juguetes, Libros y Papelería, Joyería y Accesorios, Automotriz, Otros)",${sheinCategoryBlock ? '\n  "shein_category_id": número (de la lista de categorías SHEIN proporcionada),\n  "shein_product_type_id": número (de la lista de categorías SHEIN proporcionada),' : ''}
-  "attributes": [
-    {"key": "Marca", "value": "marca identificada o estimada"},
-    {"key": "Material", "value": "material del producto"},
-    {"key": "Color", "value": "color del producto"},
-    {"key": "Dimensiones", "value": "tamaño estimado"},
-    {"key": "Peso", "value": "peso estimado"},
-    {"key": "Origen", "value": "país de origen estimado"},
-    {"key": "Empaque", "value": "tipo de empaque"},
-    {"key": "Garantía", "value": "período de garantía"}
-  ]
-}
-
-Requisitos:
-1. El título debe ser atractivo, incluir los puntos de venta principales
-2. La descripción debe ser detallada y profesional, destacando las ventajas del producto
-3. El precio debe ser acorde al mercado para este tipo de producto (en USD)
-4. Los atributos deben ser lo más precisos posible, basados en el contenido de las imágenes${sheinCategoryBlock}`,
-        },
-    ];
-
-    for (let i = 0; i < Math.min(4, images.length); i++) {
-        contents.push({
-            inlineData: {
-                mimeType: getMimeType(images[i]),
-                data: extractBase64Data(images[i]),
-            },
-        });
-    }
-
-    // 调用 Gemini
-    let response;
-    if (VITE_GEMINI_API_KEY) {
-        const r = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${VITE_GEMINI_API_KEY}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: contents }] }) }
-        );
-        response = await r.json();
-    } else {
-        const r = await fetch('/api/gemini', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'gemini-2.0-flash', contents }),
-        });
-        response = await r.json();
-    }
-
-    const text = response.candidates?.[0]?.content?.parts
-        ?.map((p: { text?: string }) => p.text)
-        .filter(Boolean)
-        .join('') || '';
-
-    let jsonStr = text;
-    const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-    if (jsonMatch) jsonStr = jsonMatch[1];
-    const objMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (objMatch) jsonStr = objMatch[0];
-
-    const parsed = JSON.parse(jsonStr);
-    return {
-        title: parsed.title || '未命名产品',
-        description: parsed.description || '',
-        price: typeof parsed.price === 'number' ? parsed.price : parseFloat(parsed.price) || 99.9,
-        category: parsed.category || 'Otros',
-        attributes: Array.isArray(parsed.attributes) ? parsed.attributes : [],
-        shein_category_id: parsed.shein_category_id || undefined,
-        shein_product_type_id: parsed.shein_product_type_id || undefined,
-    };
-}
-
-// ===== 主页面 =====
-
-interface ProductData {
-    title: string;
-    description: string;
-    price: number;
-    category: string;
-    attributes: ProductAttribute[];
-    shein_category_id?: number;
-    shein_product_type_id?: number;
-}
 
 export default function JsonGenerator() {
     // 图片上传
@@ -138,6 +21,9 @@ export default function JsonGenerator() {
     const [progress, setProgress] = useState('');
     const [productData, setProductData] = useState<ProductData | null>(null);
 
+    // 平台切换
+    const [activeTab, setActiveTab] = useState<'shein' | 'tiktok'>('shein');
+
     // SHEIN 类目匹配
     const [matchedCategory, setMatchedCategory] = useState<CachedCategory | null>(null);
     const [showCategoryPicker, setShowCategoryPicker] = useState(false);
@@ -147,6 +33,18 @@ export default function JsonGenerator() {
     const [allAttrs, setAllAttrs] = useState<import('../services/sheinApiService').SheinAttribute[]>([]);  // 全量属性模板
     const [matchedSaleAttr, setMatchedSaleAttr] = useState<{ attribute_id: number; attribute_value_id: number; custom_attribute_value?: string; _display_name?: string; _display_value?: string } | null>(null);
     const [matchedSkuSaleAttrs, setMatchedSkuSaleAttrs] = useState<{ attribute_id: number; attribute_value_id: number; _display_name?: string; _display_value?: string }[]>([]);
+    const [mainAttrStatus, setMainAttrStatus] = useState<number | undefined>(undefined);
+
+    // TikTok 类目匹配
+    const [tiktokCategory, setTiktokCategory] = useState<TiktokCachedCategory | null>(null);
+    const [showTiktokCategoryPicker, setShowTiktokCategoryPicker] = useState(false);
+    const [tiktokCatSearch, setTiktokCatSearch] = useState('');
+    const [tiktokCatResults, setTiktokCatResults] = useState<TiktokCachedCategory[]>([]);
+    const [tiktokMatchedAttrs, setTiktokMatchedAttrs] = useState<{ attribute_id: string; value_id: string; value_name: string; _display_name: string; _display_value: string }[]>([]);
+    const [tiktokSaleAttr, setTiktokSaleAttr] = useState<{ attribute_id: string; value_id: string; custom_value?: string; _display_name: string; _display_value: string } | null>(null);
+    const [tiktokGeneratedJson, setTiktokGeneratedJson] = useState<Record<string, unknown> | null>(null);
+    const [showTiktokJson, setShowTiktokJson] = useState(false);
+    const [tiktokCopied, setTiktokCopied] = useState(false);
 
     // SKU/价格 可编辑
     const [skuCode, setSkuCode] = useState('TOPM-001');
@@ -224,11 +122,14 @@ export default function JsonGenerator() {
     const handleAnalyze = async () => {
         if (images.length === 0) return;
         setAnalyzing(true);
-        setProgress('正在加载 SHEIN 类目数据...');
+        setProgress('正在加载类目数据...');
         setProductData(null);
         setMatchedCategory(null);
         setMatchedAttrs([]);
         setGeneratedJson(null);
+        setTiktokCategory(null);
+        setTiktokMatchedAttrs([]);
+        setTiktokGeneratedJson(null);
 
         try {
             // 加载本地 SHEIN 类目
@@ -256,7 +157,7 @@ Devuelve:
             } catch { /* no cache */ }
 
             setProgress('🤖 AI 正在分析产品图片...');
-            const data = await callGeminiForProductInfo(images, sheinBlock);
+            const data = await callGeminiForProductInfo(images, sheinBlock, '');
             setProductData(data);
 
             // 匹配 SHEIN 类目
@@ -278,6 +179,8 @@ Devuelve:
                     setMatchedCategory(matched);
                     // 加载属性
                     const attrs = await getLocalAttributes(matched.productTypeId);
+                    const mas = await getLocalMainAttrStatus(matched.productTypeId);
+                    setMainAttrStatus(mas);
                     if (attrs.length > 0) {
                         setAllAttrs(attrs);
                         const autoMatched = autoMatchAttributes(data.attributes, attrs);
@@ -298,6 +201,8 @@ Devuelve:
                     foundCategory = searched[0];
                     setMatchedCategory(searched[0]);
                     const attrs = await getLocalAttributes(searched[0].productTypeId);
+                    const mas = await getLocalMainAttrStatus(searched[0].productTypeId);
+                    setMainAttrStatus(mas);
                     if (attrs.length > 0) {
                         setAllAttrs(attrs);
                         const autoMatched = autoMatchAttributes(data.attributes, attrs);
@@ -308,6 +213,143 @@ Devuelve:
                         setMatchedSkuSaleAttrs(skuMatch);
                     }
                 }
+            }
+
+            // ===== TikTok 类目精确匹配（纯文本 AI，不发图片） =====
+            setProgress('🎵 TikTok 类目精确匹配中...');
+            try {
+                const tikCatList = await getTiktokCategoryListForAI();
+                const tikCats = await getTiktokLocalCategories();
+
+                if (tikCatList && tikCats.length > 0) {
+                    // 纯文本调用 Gemini，发送全量 1285 个类目，让 AI 精确选择
+                    const catMatchResult = await callGeminiTextOnly(
+                        `Eres un clasificador experto de productos de e-commerce para TikTok Shop.
+
+Información del producto:
+- Título: "${data.title}"
+- Descripción: "${data.description}"
+- Categoría general: ${data.category}
+- Atributos: ${data.attributes.map(a => `${a.key}=${a.value}`).join(', ')}
+
+A continuación tienes la lista COMPLETA de categorías de TikTok Shop.
+Formato: categoryId|ruta completa de la categoría
+
+---TIKTOK_CATEGORIES---
+${tikCatList}
+---END---
+
+Tu tarea: Elige la categoría MÁS ESPECÍFICA y PRECISA que corresponda al producto.
+
+REGLAS:
+1. Lee TODA la lista de categorías antes de elegir
+2. La categoría debe describir EXACTAMENTE el tipo de producto (no una categoría cercana o similar)
+3. Elige siempre la categoría de nivel más profundo (hoja) que sea apropiada
+4. La ruta completa debe tener sentido semántico para el producto
+5. NO confundas categorías similares (ej: "Perfume" vs "Cuidado de la piel", "Herramientas" vs "Electrodomésticos")
+
+Devuelve ESTRICTAMENTE en formato JSON:
+{"tiktok_category_id": "el ID de la categoría elegida", "reason": "breve razón de la elección"}`
+                    );
+
+                    let tikCat: TiktokCachedCategory | undefined;
+                    const selectedId = String(catMatchResult.tiktok_category_id || '');
+                    console.log(`TikTok AI 类目选择: ${selectedId}`, catMatchResult.reason);
+
+                    if (selectedId) {
+                        tikCat = tikCats.find(c => c.catId === selectedId);
+                    }
+
+                    // Fallback: 关键词搜索
+                    if (!tikCat) {
+                        const tikSearched = searchTiktokCategories(tikCats, `${data.title} ${data.category}`);
+                        if (tikSearched.length > 0) tikCat = tikSearched[0];
+                    }
+
+                    if (tikCat) {
+                        setTiktokCategory(tikCat);
+
+                        // AI 精确匹配属性
+                        const tikAttrs = await getTiktokLocalAttributes(tikCat.catId);
+                        if (tikAttrs.length > 0) {
+                            setProgress('🎵 AI 精确匹配 TikTok 属性...');
+
+                            // 构建属性模板描述
+                            const attrTemplateText = tikAttrs
+                                .filter(a => a.type !== 0 && a.type !== '0' && a.vals && a.vals.length > 0)
+                                .map(a => `attrId=${a.id}|name=${a.name}|required=${a.req}|values=[${a.vals.map(v => `${v.id}:${v.name}`).join(',')}]`)
+                                .join('\n');
+
+                            if (attrTemplateText) {
+                                try {
+                                    const attrMatchResult = await callGeminiTextOnly(
+                                        `Eres un experto en matching de atributos de productos para TikTok Shop.
+
+Producto:
+- Título: "${data.title}"
+- Descripción: "${data.description}"
+- Atributos del producto: ${data.attributes.map(a => `${a.key}="${a.value}"`).join(', ')}
+
+Plantilla de atributos de la categoría TikTok (CADA línea es un atributo con sus valores predefinidos):
+${attrTemplateText}
+
+Tu tarea: Para CADA atributo de la plantilla, busca el valor predefinido que MEJOR corresponda a los atributos del producto.
+
+REGLAS:
+1. El value_id y value_name DEBEN existir en la lista de valores predefinidos del atributo
+2. Para atributos obligatorios (required=true), SIEMPRE elige un valor aunque no sea perfecto
+3. Para atributos opcionales, solo incluye si hay una coincidencia clara
+4. NO inventes valores que no estén en la lista predefinida
+5. Haz matching SEMÁNTICO: "Claro (beige/transparente)" puede coincidir con "Beige" o "Transparente"
+
+Devuelve en formato JSON:
+{"matched_attributes": [{"attribute_id": "...", "value_id": "...", "value_name": "...", "attr_name": "..."}]}`
+                                    );
+
+                                    const aiMatchedAttrs = Array.isArray(attrMatchResult.matched_attributes)
+                                        ? (attrMatchResult.matched_attributes as Array<{ attribute_id: string; value_id: string; value_name: string; attr_name: string }>)
+                                        : [];
+
+                                    // 验证 AI 返回的属性是否有效（确保 value_id 存在于模板中）
+                                    const validAttrs = aiMatchedAttrs.filter(ma => {
+                                        const templateAttr = tikAttrs.find(ta => ta.id === ma.attribute_id);
+                                        if (!templateAttr) return false;
+                                        return templateAttr.vals.some(v => v.id === ma.value_id);
+                                    }).map(ma => {
+                                        const templateAttr = tikAttrs.find(ta => ta.id === ma.attribute_id)!;
+                                        return {
+                                            attribute_id: ma.attribute_id,
+                                            value_id: ma.value_id,
+                                            value_name: ma.value_name,
+                                            _display_name: templateAttr.name,
+                                            _display_value: ma.value_name,
+                                        };
+                                    });
+
+                                    if (validAttrs.length > 0) {
+                                        setTiktokMatchedAttrs(validAttrs);
+                                    } else {
+                                        // 退回本地匹配
+                                        const tikMatched = autoMatchTiktokAttributes(data.attributes, tikAttrs);
+                                        setTiktokMatchedAttrs(tikMatched);
+                                    }
+                                } catch {
+                                    // AI 属性匹配失败，退回本地匹配
+                                    const tikMatched = autoMatchTiktokAttributes(data.attributes, tikAttrs);
+                                    setTiktokMatchedAttrs(tikMatched);
+                                }
+                            } else {
+                                const tikMatched = autoMatchTiktokAttributes(data.attributes, tikAttrs);
+                                setTiktokMatchedAttrs(tikMatched);
+                            }
+
+                            const tikSale = autoMatchTiktokSaleAttribute(data.attributes, tikAttrs);
+                            if (tikSale) setTiktokSaleAttr(tikSale);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('TikTok 类目匹配失败:', e);
             }
 
             setProgress('✅ 分析完成');
@@ -333,6 +375,8 @@ Devuelve:
         setGeneratedJson(null);
 
         const attrs = await getLocalAttributes(cat.productTypeId);
+        const mas = await getLocalMainAttrStatus(cat.productTypeId);
+        setMainAttrStatus(mas);
         if (attrs.length > 0 && productData) {
             setAllAttrs(attrs);
             const autoMatched = autoMatchAttributes(productData.attributes, attrs);
@@ -342,6 +386,79 @@ Devuelve:
             const skuMatch = autoMatchSkuSaleAttributes(productData.attributes, [], attrs);
             setMatchedSkuSaleAttrs(skuMatch);
         }
+    };
+
+    // TikTok 类目搜索
+    const handleTiktokCatSearch = async (q: string) => {
+        setTiktokCatSearch(q);
+        if (!q.trim()) { setTiktokCatResults([]); return; }
+        const cats = await getTiktokLocalCategories();
+        setTiktokCatResults(searchTiktokCategories(cats, q));
+    };
+
+    const selectTiktokCategory = async (cat: TiktokCachedCategory) => {
+        setTiktokCategory(cat);
+        setShowTiktokCategoryPicker(false);
+        setTiktokCatSearch('');
+        setTiktokGeneratedJson(null);
+
+        const attrs = await getTiktokLocalAttributes(cat.catId);
+        if (attrs.length > 0 && productData) {
+            const matched = autoMatchTiktokAttributes(productData.attributes, attrs);
+            setTiktokMatchedAttrs(matched);
+            const sale = autoMatchTiktokSaleAttribute(productData.attributes, attrs);
+            if (sale) setTiktokSaleAttr(sale);
+        }
+    };
+
+    // 生成 TikTok JSON
+    const handleGenerateTiktokJson = () => {
+        if (!productData || !tiktokCategory) return;
+
+        const json = buildTiktokJson(
+            {
+                title: productData.title,
+                description: productData.description,
+                price: editPrice || productData.price,
+                attributes: productData.attributes,
+            },
+            skuCode,
+            editStock,
+            {
+                catId: tiktokCategory.catId,
+                matchedAttributes: tiktokMatchedAttrs,
+                saleAttribute: tiktokSaleAttr || undefined,
+            }
+        );
+
+        const jsonRecord = json as unknown as Record<string, unknown>;
+        setTiktokGeneratedJson(jsonRecord);
+        setShowTiktokJson(false);
+        setTiktokCopied(false);
+
+        // 保存到历史记录
+        const item: HistoryItem = {
+            id: crypto.randomUUID(),
+            title: `[TikTok] ${productData.title}`,
+            category: tiktokCategory.path,
+            skuCode,
+            price: editPrice || productData.price,
+            timestamp: new Date().toISOString(),
+            json: jsonRecord,
+        };
+        saveHistory([item, ...history]);
+    };
+
+    const handleTiktokDownload = () => {
+        if (!tiktokGeneratedJson) return;
+        downloadJsonFile(tiktokGeneratedJson, `tiktok_${skuCode}.json`);
+    };
+
+    const handleTiktokCopy = async () => {
+        if (!tiktokGeneratedJson) return;
+        await copyToClipboard(JSON.stringify(tiktokGeneratedJson, null, 2));
+        setTiktokCopied(true);
+        setTimeout(() => setTiktokCopied(false), 2000);
     };
 
     // 当 AI 分析出价格后，同步到 editPrice
@@ -388,6 +505,7 @@ Devuelve:
             allAttributes: allAttrs,
             saleAttribute: matchedSaleAttr || undefined,
             skuSaleAttributes: matchedSkuSaleAttrs.length > 0 ? matchedSkuSaleAttrs : undefined,
+            mainAttrStatus: mainAttrStatus,
         });
 
         const jsonRecord = json as unknown as Record<string, unknown>;
@@ -426,7 +544,7 @@ Devuelve:
         <div>
             <div className="page-header">
                 <h1>📋 产品数据生成</h1>
-                <p>上传产品图片 → AI 自动生成 SHEIN 上架 JSON 文件</p>
+                <p>上传产品图片 → AI 自动生成 SHEIN / TikTok Shop 上架 JSON 文件</p>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: productData ? '1fr 1fr' : '1fr', gap: 'var(--space-lg)', alignItems: 'start' }}>
@@ -517,141 +635,275 @@ Devuelve:
                         )}
                     </div>
 
-                    {/* Step 3: 类目匹配 + SKU/价格 + 生成 */}
+                    {/* Step 3: 平台 Tab + 类目匹配 + SKU/价格 + 生成 */}
                     {productData && (
                         <div className="card" style={{ marginBottom: 'var(--space-md)' }}>
                             <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 'var(--space-sm)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <span style={{ background: '#10b981', color: '#fff', width: 22, height: 22, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>3</span>
-                                SHEIN JSON 生成
+                                JSON 生成
                             </h3>
 
-                            {/* 类目匹配 */}
-                            {matchedCategory ? (
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'rgba(16,185,129,0.08)', borderRadius: 'var(--radius-sm)', marginBottom: 'var(--space-sm)' }}>
-                                    <div>
-                                        <div style={{ fontSize: '0.78rem', fontWeight: 600 }}>
-                                            <CheckCircle size={12} style={{ color: '#10b981', verticalAlign: 'middle' }} /> {matchedCategory.label.split(' → ').pop()}
-                                        </div>
-                                        <div style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
-                                            ID: {matchedCategory.categoryId} | Type: {matchedCategory.productTypeId}
-                                        </div>
-                                    </div>
-                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.68rem', padding: '3px 8px' }} onClick={() => setShowCategoryPicker(!showCategoryPicker)}>
-                                        更换
-                                    </button>
-                                </div>
-                            ) : (
-                                <div style={{ padding: '10px 12px', background: 'rgba(251,191,36,0.08)', borderRadius: 'var(--radius-sm)', marginBottom: 'var(--space-sm)', fontSize: '0.75rem', color: '#b45309' }}>
-                                    <AlertTriangle size={12} style={{ verticalAlign: 'middle' }} /> 未匹配类目
-                                    <button className="btn btn-secondary btn-sm" onClick={() => setShowCategoryPicker(true)} style={{ marginLeft: '8px', fontSize: '0.68rem', padding: '2px 8px' }}>
-                                        <Search size={10} /> 搜索
-                                    </button>
-                                </div>
-                            )}
+                            {/* 平台 Tab 切换 */}
+                            <div style={{ display: 'flex', gap: '4px', marginBottom: 'var(--space-sm)', borderBottom: '2px solid var(--color-border)', paddingBottom: '0' }}>
+                                <button
+                                    onClick={() => setActiveTab('shein')}
+                                    style={{
+                                        padding: '6px 16px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: 600,
+                                        border: 'none',
+                                        borderBottom: activeTab === 'shein' ? '2px solid #10b981' : '2px solid transparent',
+                                        background: activeTab === 'shein' ? 'rgba(16,185,129,0.08)' : 'transparent',
+                                        color: activeTab === 'shein' ? '#10b981' : 'var(--color-text-muted)',
+                                        cursor: 'pointer',
+                                        borderRadius: '6px 6px 0 0',
+                                        transition: 'all 0.2s',
+                                        marginBottom: '-2px',
+                                    }}
+                                >
+                                    🛍️ SHEIN
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('tiktok')}
+                                    style={{
+                                        padding: '6px 16px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: 600,
+                                        border: 'none',
+                                        borderBottom: activeTab === 'tiktok' ? '2px solid #ff004f' : '2px solid transparent',
+                                        background: activeTab === 'tiktok' ? 'rgba(255,0,79,0.06)' : 'transparent',
+                                        color: activeTab === 'tiktok' ? '#ff004f' : 'var(--color-text-muted)',
+                                        cursor: 'pointer',
+                                        borderRadius: '6px 6px 0 0',
+                                        transition: 'all 0.2s',
+                                        marginBottom: '-2px',
+                                    }}
+                                >
+                                    🎵 TikTok Shop
+                                </button>
+                            </div>
 
-                            {showCategoryPicker && (
-                                <div style={{ marginBottom: 'var(--space-sm)' }}>
-                                    <input
-                                        type="text"
-                                        className="form-input"
-                                        placeholder="搜索 SHEIN 类目..."
-                                        value={catSearch}
-                                        onChange={e => handleCatSearch(e.target.value)}
-                                        style={{ width: '100%', marginBottom: '6px', fontSize: '0.8rem' }}
-                                    />
-                                    <div style={{ maxHeight: '150px', overflow: 'auto' }}>
-                                        {catResults.map((cat, i) => (
-                                            <button
-                                                key={i}
-                                                onClick={() => selectCategory(cat)}
-                                                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px', marginBottom: '2px', background: 'var(--color-bg-input)', border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--color-text-primary)' }}
-                                            >
-                                                {cat.label}
+                            {/* ===== SHEIN Tab ===== */}
+                            {activeTab === 'shein' && (
+                                <div>
+                                    {/* 类目匹配 */}
+                                    {matchedCategory ? (
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'rgba(16,185,129,0.08)', borderRadius: 'var(--radius-sm)', marginBottom: 'var(--space-sm)' }}>
+                                            <div>
+                                                <div style={{ fontSize: '0.78rem', fontWeight: 600 }}>
+                                                    <CheckCircle size={12} style={{ color: '#10b981', verticalAlign: 'middle' }} /> {matchedCategory.label.split(' → ').pop()}
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                                                    ID: {matchedCategory.categoryId} | Type: {matchedCategory.productTypeId}
+                                                </div>
+                                            </div>
+                                            <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.68rem', padding: '3px 8px' }} onClick={() => setShowCategoryPicker(!showCategoryPicker)}>
+                                                更换
                                             </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                                        </div>
+                                    ) : (
+                                        <div style={{ padding: '10px 12px', background: 'rgba(251,191,36,0.08)', borderRadius: 'var(--radius-sm)', marginBottom: 'var(--space-sm)', fontSize: '0.75rem', color: '#b45309' }}>
+                                            <AlertTriangle size={12} style={{ verticalAlign: 'middle' }} /> 未匹配类目
+                                            <button className="btn btn-secondary btn-sm" onClick={() => setShowCategoryPicker(true)} style={{ marginLeft: '8px', fontSize: '0.68rem', padding: '2px 8px' }}>
+                                                <Search size={10} /> 搜索
+                                            </button>
+                                        </div>
+                                    )}
 
-                            {/* 匹配属性标签 */}
-                            {matchedAttrs.length > 0 && (
-                                <div style={{ marginBottom: 'var(--space-sm)' }}>
-                                    <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginBottom: '4px' }}>
-                                        🏷️ {matchedAttrs.length} 个属性已匹配
-                                    </p>
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
-                                        {matchedAttrs.slice(0, 6).map((a, i) => (
-                                            <span key={i} style={{ fontSize: '0.62rem', padding: '2px 6px', background: 'rgba(16,185,129,0.1)', borderRadius: '10px', color: '#10b981' }}>
-                                                {a._display_name}: {a._display_value}
-                                            </span>
-                                        ))}
-                                        {matchedAttrs.length > 6 && (
-                                            <span style={{ fontSize: '0.62rem', padding: '2px 6px', color: 'var(--color-text-muted)' }}>
-                                                +{matchedAttrs.length - 6}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
+                                    {showCategoryPicker && (
+                                        <div style={{ marginBottom: 'var(--space-sm)' }}>
+                                            <input
+                                                type="text"
+                                                className="form-input"
+                                                placeholder="搜索 SHEIN 类目..."
+                                                value={catSearch}
+                                                onChange={e => handleCatSearch(e.target.value)}
+                                                style={{ width: '100%', marginBottom: '6px', fontSize: '0.8rem' }}
+                                            />
+                                            <div style={{ maxHeight: '150px', overflow: 'auto' }}>
+                                                {catResults.map((cat, i) => (
+                                                    <button
+                                                        key={i}
+                                                        onClick={() => selectCategory(cat)}
+                                                        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px', marginBottom: '2px', background: 'var(--color-bg-input)', border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--color-text-primary)' }}
+                                                    >
+                                                        {cat.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
 
-                            {/* SPU / 价格 / 库存 */}
-                            {matchedCategory && (
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', marginBottom: 'var(--space-sm)' }}>
-                                    <div>
-                                        <label style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: '3px', display: 'block' }}>SPU 代码</label>
-                                        <input
-                                            type="text"
-                                            value={skuCode}
-                                            onChange={e => setSkuCode(e.target.value)}
-                                            placeholder="TOPM-001"
-                                            style={{ width: '100%', padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: '0.82rem' }}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: '3px', display: 'block' }}>售价 (MXN)</label>
-                                        <input
-                                            type="number"
-                                            value={editPrice || ''}
-                                            onChange={e => setEditPrice(parseFloat(e.target.value) || 0)}
-                                            placeholder="0.00"
-                                            step="0.01"
-                                            min="0"
-                                            style={{ width: '100%', padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: '0.82rem' }}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: '3px', display: 'block' }}>库存</label>
-                                        <input
-                                            type="number"
-                                            value={editStock}
-                                            onChange={e => setEditStock(parseInt(e.target.value) || 0)}
-                                            placeholder="100"
-                                            min="0"
-                                            style={{ width: '100%', padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: '0.82rem' }}
-                                        />
-                                    </div>
-                                </div>
-                            )}
+                                    {/* 匹配属性标签 */}
+                                    {matchedAttrs.length > 0 && (
+                                        <div style={{ marginBottom: 'var(--space-sm)' }}>
+                                            <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginBottom: '4px' }}>
+                                                🏷️ {matchedAttrs.length} 个属性已匹配
+                                            </p>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
+                                                {matchedAttrs.slice(0, 6).map((a, i) => (
+                                                    <span key={i} style={{ fontSize: '0.62rem', padding: '2px 6px', background: 'rgba(16,185,129,0.1)', borderRadius: '10px', color: '#10b981' }}>
+                                                        {a._display_name}: {a._display_value}
+                                                    </span>
+                                                ))}
+                                                {matchedAttrs.length > 6 && (
+                                                    <span style={{ fontSize: '0.62rem', padding: '2px 6px', color: 'var(--color-text-muted)' }}>
+                                                        +{matchedAttrs.length - 6}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
 
-                            {/* 生成按钮 */}
-                            <button
-                                className="btn btn-primary"
-                                onClick={handleGenerateJson}
-                                disabled={!matchedCategory}
-                                style={{ width: '100%', marginBottom: 'var(--space-sm)' }}
-                            >
-                                <FileJson size={14} /> 生成 SHEIN JSON
-                            </button>
+                                    {/* SPU / 价格 / 库存 */}
+                                    {matchedCategory && (
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', marginBottom: 'var(--space-sm)' }}>
+                                            <div>
+                                                <label style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: '3px', display: 'block' }}>SPU 代码</label>
+                                                <input type="text" value={skuCode} onChange={e => setSkuCode(e.target.value)} placeholder="TOPM-001" style={{ width: '100%', padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: '0.82rem' }} />
+                                            </div>
+                                            <div>
+                                                <label style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: '3px', display: 'block' }}>售价 (MXN)</label>
+                                                <input type="number" value={editPrice || ''} onChange={e => setEditPrice(parseFloat(e.target.value) || 0)} placeholder="0.00" step="0.01" min="0" style={{ width: '100%', padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: '0.82rem' }} />
+                                            </div>
+                                            <div>
+                                                <label style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: '3px', display: 'block' }}>库存</label>
+                                                <input type="number" value={editStock} onChange={e => setEditStock(parseInt(e.target.value) || 0)} placeholder="100" min="0" style={{ width: '100%', padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: '0.82rem' }} />
+                                            </div>
+                                        </div>
+                                    )}
 
-                            {/* 下载/复制 */}
-                            {generatedJson && (
-                                <div style={{ display: 'flex', gap: '6px' }}>
-                                    <button className="btn btn-primary btn-sm" onClick={handleDownload} style={{ flex: 1 }}>
-                                        <Download size={12} /> 下载
+                                    {/* 生成按钮 */}
+                                    <button className="btn btn-primary" onClick={handleGenerateJson} disabled={!matchedCategory} style={{ width: '100%', marginBottom: 'var(--space-sm)' }}>
+                                        <FileJson size={14} /> 生成 SHEIN JSON
                                     </button>
-                                    <button className="btn btn-secondary btn-sm" onClick={handleCopy} style={{ flex: 1 }}>
-                                        {copied ? <><Check size={12} /> 已复制</> : <><Copy size={12} /> 复制</>}
+
+                                    {/* 下载/复制 */}
+                                    {generatedJson && (
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                            <button className="btn btn-primary btn-sm" onClick={handleDownload} style={{ flex: 1 }}>
+                                                <Download size={12} /> 下载
+                                            </button>
+                                            <button className="btn btn-secondary btn-sm" onClick={handleCopy} style={{ flex: 1 }}>
+                                                {copied ? <><Check size={12} /> 已复制</> : <><Copy size={12} /> 复制</>}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* ===== TikTok Tab ===== */}
+                            {activeTab === 'tiktok' && (
+                                <div>
+                                    {/* TikTok 类目匹配 */}
+                                    {tiktokCategory ? (
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'rgba(255,0,79,0.06)', borderRadius: 'var(--radius-sm)', marginBottom: 'var(--space-sm)' }}>
+                                            <div>
+                                                <div style={{ fontSize: '0.78rem', fontWeight: 600 }}>
+                                                    <CheckCircle size={12} style={{ color: '#ff004f', verticalAlign: 'middle' }} /> {tiktokCategory.name}
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                                                    {tiktokCategory.path}
+                                                </div>
+                                            </div>
+                                            <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.68rem', padding: '3px 8px' }} onClick={() => setShowTiktokCategoryPicker(!showTiktokCategoryPicker)}>
+                                                更换
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div style={{ padding: '10px 12px', background: 'rgba(251,191,36,0.08)', borderRadius: 'var(--radius-sm)', marginBottom: 'var(--space-sm)', fontSize: '0.75rem', color: '#b45309' }}>
+                                            <AlertTriangle size={12} style={{ verticalAlign: 'middle' }} /> 未匹配 TikTok 类目
+                                            <button className="btn btn-secondary btn-sm" onClick={() => setShowTiktokCategoryPicker(true)} style={{ marginLeft: '8px', fontSize: '0.68rem', padding: '2px 8px' }}>
+                                                <Search size={10} /> 搜索
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {showTiktokCategoryPicker && (
+                                        <div style={{ marginBottom: 'var(--space-sm)' }}>
+                                            <input
+                                                type="text"
+                                                className="form-input"
+                                                placeholder="搜索 TikTok 类目..."
+                                                value={tiktokCatSearch}
+                                                onChange={e => handleTiktokCatSearch(e.target.value)}
+                                                style={{ width: '100%', marginBottom: '6px', fontSize: '0.8rem' }}
+                                            />
+                                            <div style={{ maxHeight: '150px', overflow: 'auto' }}>
+                                                {tiktokCatResults.map((cat, i) => (
+                                                    <button
+                                                        key={i}
+                                                        onClick={() => selectTiktokCategory(cat)}
+                                                        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px', marginBottom: '2px', background: 'var(--color-bg-input)', border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--color-text-primary)' }}
+                                                    >
+                                                        <span style={{ fontWeight: 600 }}>{cat.name}</span>
+                                                        <span style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)', marginLeft: '6px' }}>{cat.path}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* TikTok 匹配属性标签 */}
+                                    {tiktokMatchedAttrs.length > 0 && (
+                                        <div style={{ marginBottom: 'var(--space-sm)' }}>
+                                            <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginBottom: '4px' }}>
+                                                🏷️ {tiktokMatchedAttrs.length} 个属性已匹配
+                                            </p>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
+                                                {tiktokMatchedAttrs.slice(0, 6).map((a, i) => (
+                                                    <span key={i} style={{ fontSize: '0.62rem', padding: '2px 6px', background: 'rgba(255,0,79,0.08)', borderRadius: '10px', color: '#ff004f' }}>
+                                                        {a._display_name}: {a._display_value}
+                                                    </span>
+                                                ))}
+                                                {tiktokMatchedAttrs.length > 6 && (
+                                                    <span style={{ fontSize: '0.62rem', padding: '2px 6px', color: 'var(--color-text-muted)' }}>
+                                                        +{tiktokMatchedAttrs.length - 6}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* SKU/价格/库存（共享） */}
+                                    {tiktokCategory && (
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', marginBottom: 'var(--space-sm)' }}>
+                                            <div>
+                                                <label style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: '3px', display: 'block' }}>SKU 代码</label>
+                                                <input type="text" value={skuCode} onChange={e => setSkuCode(e.target.value)} placeholder="TOPM-001" style={{ width: '100%', padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: '0.82rem' }} />
+                                            </div>
+                                            <div>
+                                                <label style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: '3px', display: 'block' }}>售价 (MXN)</label>
+                                                <input type="number" value={editPrice || ''} onChange={e => setEditPrice(parseFloat(e.target.value) || 0)} placeholder="0.00" step="0.01" min="0" style={{ width: '100%', padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: '0.82rem' }} />
+                                            </div>
+                                            <div>
+                                                <label style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: '3px', display: 'block' }}>库存</label>
+                                                <input type="number" value={editStock} onChange={e => setEditStock(parseInt(e.target.value) || 0)} placeholder="100" min="0" style={{ width: '100%', padding: '6px 10px', background: 'var(--color-bg-input)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: '0.82rem' }} />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* 生成按钮 */}
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={handleGenerateTiktokJson}
+                                        disabled={!tiktokCategory}
+                                        style={{ width: '100%', marginBottom: 'var(--space-sm)', background: '#ff004f', borderColor: '#ff004f' }}
+                                    >
+                                        <FileJson size={14} /> 生成 TikTok JSON
                                     </button>
+
+                                    {/* 下载/复制 */}
+                                    {tiktokGeneratedJson && (
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                            <button className="btn btn-primary btn-sm" onClick={handleTiktokDownload} style={{ flex: 1, background: '#ff004f', borderColor: '#ff004f' }}>
+                                                <Download size={12} /> 下载
+                                            </button>
+                                            <button className="btn btn-secondary btn-sm" onClick={handleTiktokCopy} style={{ flex: 1 }}>
+                                                {tiktokCopied ? <><Check size={12} /> 已复制</> : <><Copy size={12} /> 复制</>}
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -787,9 +1039,9 @@ Devuelve:
                                 </table>
                             )}
 
-                            {/* SHEIN 匹配信息 */}
+                            {/* 平台匹配信息 */}
                             {matchedCategory && (
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem', marginBottom: '12px' }}>
                                     <thead>
                                         <tr>
                                             <th colSpan={2} style={{ textAlign: 'left', padding: '6px 10px', background: 'rgba(16,185,129,0.1)', color: '#10b981', fontWeight: 600, borderRadius: '6px 6px 0 0', fontSize: '0.75rem' }}>
@@ -806,10 +1058,6 @@ Devuelve:
                                             <td style={{ padding: '4px 10px', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.7rem' }}>Category ID</td>
                                             <td style={{ padding: '4px 10px', color: 'var(--color-text-primary)', fontSize: '0.7rem' }}>{matchedCategory.categoryId}</td>
                                         </tr>
-                                        <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-                                            <td style={{ padding: '4px 10px', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.7rem' }}>Product Type</td>
-                                            <td style={{ padding: '4px 10px', color: 'var(--color-text-primary)', fontSize: '0.7rem' }}>{matchedCategory.productTypeId}</td>
-                                        </tr>
                                         <tr>
                                             <td style={{ padding: '4px 10px', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.7rem' }}>匹配属性</td>
                                             <td style={{ padding: '4px 10px', color: 'var(--color-text-primary)', fontSize: '0.7rem' }}>{matchedAttrs.length} 个</td>
@@ -817,14 +1065,40 @@ Devuelve:
                                     </tbody>
                                 </table>
                             )}
+
+                            {tiktokCategory && (
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                                    <thead>
+                                        <tr>
+                                            <th colSpan={2} style={{ textAlign: 'left', padding: '6px 10px', background: 'rgba(255,0,79,0.06)', color: '#ff004f', fontWeight: 600, borderRadius: '6px 6px 0 0', fontSize: '0.75rem' }}>
+                                                🎵 TikTok 匹配
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
+                                            <td style={{ padding: '4px 10px', fontWeight: 600, color: 'var(--color-text-secondary)', width: '80px', fontSize: '0.7rem' }}>类目</td>
+                                            <td style={{ padding: '4px 10px', color: 'var(--color-text-primary)', fontSize: '0.7rem' }}>{tiktokCategory.path}</td>
+                                        </tr>
+                                        <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
+                                            <td style={{ padding: '4px 10px', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.7rem' }}>Category ID</td>
+                                            <td style={{ padding: '4px 10px', color: 'var(--color-text-primary)', fontSize: '0.7rem' }}>{tiktokCategory.catId}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style={{ padding: '4px 10px', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.7rem' }}>匹配属性</td>
+                                            <td style={{ padding: '4px 10px', color: 'var(--color-text-primary)', fontSize: '0.7rem' }}>{tiktokMatchedAttrs.length} 个</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            )}
                         </div>
 
-                        {/* JSON 预览 */}
+                        {/* JSON 预览 — SHEIN */}
                         {generatedJson && (
-                            <div className="card">
+                            <div className="card" style={{ marginBottom: 'var(--space-md)' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                     <h4 style={{ fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        📄 JSON 预览
+                                        🛍️ SHEIN JSON
                                     </h4>
                                     <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.65rem', padding: '2px 8px' }} onClick={() => setShowJson(!showJson)}>
                                         {showJson ? <><ChevronUp size={12} /> 收起</> : <><ChevronDown size={12} /> 展开</>}
@@ -838,6 +1112,30 @@ Devuelve:
                                 {!showJson && (
                                     <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
                                         📂 {matchedCategory?.label?.split(' → ').pop()} | 🏷️ {matchedAttrs.length} 属性 | SKU: {skuCode}
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
+                        {/* JSON 预览 — TikTok */}
+                        {tiktokGeneratedJson && (
+                            <div className="card">
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                    <h4 style={{ fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', color: '#ff004f' }}>
+                                        🎵 TikTok JSON
+                                    </h4>
+                                    <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.65rem', padding: '2px 8px' }} onClick={() => setShowTiktokJson(!showTiktokJson)}>
+                                        {showTiktokJson ? <><ChevronUp size={12} /> 收起</> : <><ChevronDown size={12} /> 展开</>}
+                                    </button>
+                                </div>
+                                {showTiktokJson && (
+                                    <pre style={{ padding: '10px', background: 'var(--color-bg-primary)', borderRadius: 'var(--radius-sm)', fontSize: '0.62rem', overflow: 'auto', maxHeight: '500px', lineHeight: 1.4, color: 'var(--color-text-secondary)' }}>
+                                        {JSON.stringify(tiktokGeneratedJson, null, 2)}
+                                    </pre>
+                                )}
+                                {!showTiktokJson && (
+                                    <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                                        📂 {tiktokCategory?.name} | 🏷️ {tiktokMatchedAttrs.length} 属性 | SKU: {skuCode}
                                     </p>
                                 )}
                             </div>

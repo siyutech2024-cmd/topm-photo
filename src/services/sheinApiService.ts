@@ -52,7 +52,7 @@ export interface SheinPublishJson {
         sub_site_list: string[];
     }[];
     skc_list: {
-        sale_attribute: {
+        sale_attribute?: {
             attribute_id: string;
             attribute_value_id: number;
             custom_attribute_value?: string;
@@ -72,7 +72,7 @@ export interface SheinPublishJson {
             stock_info_list: {
                 inventory_num: string;     // 字符串!
             }[];
-            sale_attribute_list: {
+            sale_attribute_list?: {
                 attribute_id: string;
                 attribute_value_id: string;
             }[];
@@ -140,6 +140,7 @@ export function flattenCategories(categories: SheinCategory[], path: string[] = 
 // ===== 属性模板 =====
 
 const _attrCache: Record<number, SheinAttribute[]> = {};
+const _mainAttrStatusCache: Record<number, number> = {};
 
 export async function fetchAttributes(productTypeId: number): Promise<SheinAttribute[]> {
     if (_attrCache[productTypeId]) return _attrCache[productTypeId];
@@ -148,12 +149,15 @@ export async function fetchAttributes(productTypeId: number): Promise<SheinAttri
     const data = await callSheinApi<{
         info: {
             data: Array<{
-                product_type_id: number; attribute_infos: Array<{
+                product_type_id: number;
+                main_attribute_status?: number;  // 3=主规格禁用
+                attribute_infos: Array<{
                     attribute_id: number;
                     attribute_name: string;
                     attribute_name_en?: string;
                     attribute_type: number;
                     attribute_is_show: number;
+                    attribute_status?: number;     // 2=活跃, 3=禁用
                     attribute_label?: number;
                     attribute_mode?: number;
                     attribute_value_info_list?: Array<{ attribute_value_id: number; attribute_value: string; attribute_value_en?: string }>;
@@ -164,8 +168,15 @@ export async function fetchAttributes(productTypeId: number): Promise<SheinAttri
         product_type_id_list: [productTypeId],
     });
 
+    const rawEntry = data.info?.data?.[0];
+
+    // 缓存 main_attribute_status
+    if (rawEntry?.main_attribute_status !== undefined) {
+        _mainAttrStatusCache[productTypeId] = rawEntry.main_attribute_status;
+    }
+
     // 从 info.data[0].attribute_infos 提取并转换为统一格式
-    const rawInfos = data.info?.data?.[0]?.attribute_infos || [];
+    const rawInfos = rawEntry?.attribute_infos || [];
     const attrs: SheinAttribute[] = rawInfos.map(a => ({
         attribute_id: a.attribute_id,
         attribute_name: a.attribute_name_en || a.attribute_name,
@@ -181,6 +192,63 @@ export async function fetchAttributes(productTypeId: number): Promise<SheinAttri
 
     _attrCache[productTypeId] = attrs;
     return attrs;
+}
+
+/**
+ * 获取最近一次 fetchAttributes 调用时缓存的 main_attribute_status
+ * 需要先调用 fetchAttributes 才有数据
+ */
+export function getMainAttrStatusFromCache(productTypeId: number): number | undefined {
+    return _mainAttrStatusCache[productTypeId];
+}
+
+/**
+ * 批量获取 main_attribute_status（仅获取状态，不解析完整属性列表）
+ * SHEIN API 支持 product_type_id_list 批量查询，每批最多 10 个
+ * 返回 Map<productTypeId, mainAttrStatus>
+ */
+export async function fetchMainAttrStatusBatch(
+    ptIds: number[],
+    onProgress?: (msg: string) => void
+): Promise<Map<number, number>> {
+    const result = new Map<number, number>();
+    const batchSize = 10;
+    const batches = [];
+    for (let i = 0; i < ptIds.length; i += batchSize) {
+        batches.push(ptIds.slice(i, i + batchSize));
+    }
+
+    let done = 0;
+    for (const batch of batches) {
+        onProgress?.(`📊 批量获取主规格状态 ${done}/${ptIds.length}...`);
+        try {
+            const data = await callSheinApi<{
+                info: {
+                    data: Array<{
+                        product_type_id: number;
+                        main_attribute_status?: number;
+                    }>
+                }
+            }>('attributes', {
+                product_type_id_list: batch,
+            });
+
+            for (const entry of (data.info?.data || [])) {
+                if (entry.main_attribute_status !== undefined) {
+                    result.set(entry.product_type_id, entry.main_attribute_status);
+                    _mainAttrStatusCache[entry.product_type_id] = entry.main_attribute_status;
+                }
+            }
+        } catch (e) {
+            console.warn(`批量获取 mainAttrStatus 失败 (batch ${done}):`, e);
+        }
+        done += batch.length;
+        // 限流保护
+        await new Promise(r => setTimeout(r, 300));
+    }
+
+    onProgress?.(`✅ 已获取 ${result.size}/${ptIds.length} 个主规格状态`);
+    return result;
 }
 
 // ===== 图片转换 =====
@@ -251,6 +319,7 @@ export interface BuildJsonOptions {
     warehouseId?: string;          // 供应商仓库 ID
     costPrice?: string;            // 进货成本价
     costCurrency?: string;         // 成本货币
+    mainAttrStatus?: number;        // 主规格状态: 3=禁用 (不需要 SKC 主销售属性)
 }
 
 export function buildSheinJson(product: Product, options: BuildJsonOptions): SheinPublishJson {
@@ -273,22 +342,43 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
         }];
 
     // ---------- 自动匹配销售属性 ----------
+    // mainAttrStatus=3 表示此类目已禁用主规格
+    // SHEIN API 仍要求 sale_attribute 非空，但不能用自定义值（不支持新增属性值）
+    // 策略：使用 type=1 属性的第一个标准值
+    const mainSpecDisabled = options.mainAttrStatus === 3;
+
     let resolvedSaleAttribute = options.saleAttribute;
-    if (!resolvedSaleAttribute && options.allAttributes) {
+    if (!mainSpecDisabled && !resolvedSaleAttribute && options.allAttributes) {
         const matched = autoMatchSaleAttribute(
             product.attributes, options.allAttributes
         );
         if (matched) resolvedSaleAttribute = matched;
     }
-    const defaultSaleAttribute = resolvedSaleAttribute || {
-        attribute_id: 0,
-        attribute_value_id: 0,
-        custom_attribute_value: getAttr(product, 'Color') || 'Por defecto',
-    };
 
-    // SKU 级属性（尺码）
+    // 主规格禁用时：从模板中找第一个 type=1 属性，使用其第一个标准值
+    let defaultSaleAttribute: { attribute_id: number; attribute_value_id: number; custom_attribute_value?: string };
+    if (mainSpecDisabled && options.allAttributes) {
+        const saleAttr = options.allAttributes.find(a => a.attribute_type === 1 && a.values && a.values.length > 0);
+        if (saleAttr) {
+            defaultSaleAttribute = {
+                attribute_id: saleAttr.attribute_id,
+                attribute_value_id: saleAttr.values![0].value_id,
+            };
+        } else {
+            // 没有 type=1 属性，用 0 占位（极少数情况）
+            defaultSaleAttribute = { attribute_id: 0, attribute_value_id: 0 };
+        }
+    } else {
+        defaultSaleAttribute = resolvedSaleAttribute || {
+            attribute_id: 0,
+            attribute_value_id: 0,
+            custom_attribute_value: getAttr(product, 'Color') || 'Por defecto',
+        };
+    }
+
+    // SKU 级属性（尺码）— 主规格禁用时不发
     let resolvedSkuSaleAttrs = options.skuSaleAttributes;
-    if (!resolvedSkuSaleAttrs && options.allAttributes) {
+    if (!mainSpecDisabled && !resolvedSkuSaleAttrs && options.allAttributes) {
         resolvedSkuSaleAttrs = autoMatchSkuSaleAttributes(
             product.attributes, product.variants || [], options.allAttributes
         );
@@ -297,19 +387,12 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
     // SPU 代码（取第一个 variant 的 sku_code）
     const supplierCode = variants[0]?.sku_code || `TOPM-${product.id?.slice(0, 8) || 'DRAFT'}`;
 
-    const skcList = variants.map(v => ({
-        sale_attribute: {
-            attribute_id: String(defaultSaleAttribute.attribute_id),
-            attribute_value_id: defaultSaleAttribute.attribute_value_id,
-            ...(defaultSaleAttribute.custom_attribute_value
-                ? { custom_attribute_value: defaultSaleAttribute.custom_attribute_value }
-                : {}),
-        },
-        sku_list: [{
+    const skcList = variants.map(v => {
+        const skuEntry = {
             supplier_sku: v.sku_code || supplierCode,
             mall_state: 1,
             weight: v.weight_g || weight,
-            length: dims.l,                            // 数字（不是字符串）
+            length: dims.l,
             width: dims.w,
             height: dims.h,
             stop_purchase: 1,
@@ -317,26 +400,55 @@ export function buildSheinJson(product: Product, options: BuildJsonOptions): She
                 cost_price: costPrice,
                 currency: costCurrency,
             },
-            // 注意：成功上架的 JSON 没有 price_info_list！
             stock_info_list: [{
-                inventory_num: String(v.stock || 100),  // 字符串！
+                inventory_num: String(v.stock || 100),
             }],
-            sale_attribute_list: (resolvedSkuSaleAttrs || []).map(a => ({
-                attribute_id: String(a.attribute_id),
-                attribute_value_id: String(a.attribute_value_id),
-            })),
-        }],
-        shelf_require: '0',
-        shelf_way: '1',
-    }));
+            // 主规格禁用时不发 sale_attribute_list
+            ...(!mainSpecDisabled ? {
+                sale_attribute_list: (resolvedSkuSaleAttrs || [])
+                    .filter(a => String(a.attribute_id) !== String(defaultSaleAttribute.attribute_id))
+                    .map(a => ({
+                        attribute_id: String(a.attribute_id),
+                        attribute_value_id: String(a.attribute_value_id),
+                    })),
+            } : {}),
+        };
+
+        return {
+            // sale_attribute 始终发送（API 要求非空）
+            sale_attribute: {
+                attribute_id: String(defaultSaleAttribute.attribute_id),
+                attribute_value_id: defaultSaleAttribute.attribute_value_id,
+                ...(defaultSaleAttribute.custom_attribute_value
+                    ? { custom_attribute_value: defaultSaleAttribute.custom_attribute_value }
+                    : {}),
+            },
+            sku_list: [skuEntry],
+            shelf_require: '0' as const,
+            shelf_way: '1' as const,
+        };
+    });
 
     // 清理属性：转为字符串 ID，移除内部显示字段
-    const cleanAttributes = options.matchedAttributes.map(a => ({
-        attribute_id: String(a.attribute_id),
-        ...(a.attribute_extra_value
-            ? { attribute_extra_value: a.attribute_extra_value }
-            : { attribute_value_id: String(a.attribute_value_id) }),
-    }));
+    // type=3 成分: 需要同时发 attribute_value_id + attribute_extra_value
+    // type=2/手动输入: 只发 attribute_extra_value (不发 value_id=0)
+    // type=4 普通: 发 attribute_value_id
+    const cleanAttributes = options.matchedAttributes
+        .filter(a => a.attribute_value_id !== 0 || a.attribute_extra_value) // 过滤无效条目
+        .map(a => {
+            const result: { attribute_id: string; attribute_value_id?: string; attribute_extra_value?: string } = {
+                attribute_id: String(a.attribute_id),
+            };
+            // 有 value_id 且不为 0 → 发送 value_id
+            if (a.attribute_value_id && a.attribute_value_id !== 0) {
+                result.attribute_value_id = String(a.attribute_value_id);
+            }
+            // 有 extra_value → 发送 extra_value
+            if (a.attribute_extra_value) {
+                result.attribute_extra_value = a.attribute_extra_value;
+            }
+            return result;
+        });
 
     return {
         brand_code: '',
@@ -426,88 +538,122 @@ const COLOR_ALIASES: Record<string, string[]> = {
 };
 
 /**
- * 自动匹配 SKC 级主销售属性（颜色）
- * 从属性模板中找 attribute_type=1 且 attribute_label=1 的属性，
- * 然后用产品的颜色值在其候选值中模糊匹配。
+ * 自动匹配 SKC 级主销售属性
+ * 
+ * 重要：SHEIN 在非服装类目（家电、日用品等）下**不允许颜色作为主规格**。
+ * 策略：
+ * 1. 优先选 type=1 且 label=1 的**非颜色**属性（如 Model）
+ * 2. 如果 label=1 只有颜色，则改用其他 type=1 属性（如 Model、Size）
+ * 3. 最终 fallback 才使用颜色
  */
 export function autoMatchSaleAttribute(
     productAttrs: { key: string; value: string }[],
     templateAttrs: SheinAttribute[]
 ): { attribute_id: number; attribute_value_id: number; custom_attribute_value?: string; _display_name?: string; _display_value?: string } | null {
-    // 找到 SKC 主销售属性（type=1, label=1，通常是"颜色"）
-    const skcMainAttr = templateAttrs.find(
-        a => a.attribute_type === 1 && a.attribute_label === 1
-    );
-    if (!skcMainAttr || !skcMainAttr.values?.length) return null;
+    // 找所有 type=1 的销售属性
+    const saleAttrs = templateAttrs.filter(a => a.attribute_type === 1);
+    if (saleAttrs.length === 0) return null;
 
-    // 从产品属性中获取颜色值
-    const colorAttr = productAttrs.find(p =>
-        /^(color|颜色|colour)$/i.test(p.key)
-    );
-    const colorValue = colorAttr?.value || '';
+    // SHEIN 非服装类目只允许 Model 类属性作为主规格
+    // 排序优先级：Model > 其他非颜色非尺码 > Size > Color
+    const isColorAttr = (a: SheinAttribute) =>
+        a.attribute_id === 27 || /^color$/i.test(a.attribute_name);
+    const isSizeAttr = (a: SheinAttribute) =>
+        a.attribute_id === 87 || /^size$/i.test(a.attribute_name);
 
-    if (!colorValue) {
-        // 没有颜色信息，返回第一个候选值作为默认
-        const firstValue = skcMainAttr.values[0];
-        return {
-            attribute_id: skcMainAttr.attribute_id,
-            attribute_value_id: firstValue.value_id,
-            _display_name: skcMainAttr.attribute_name,
-            _display_value: firstValue.value_name,
-        };
-    }
+    const getPriority = (a: SheinAttribute): number => {
+        if (isColorAttr(a)) return 3;   // 最低优先
+        if (isSizeAttr(a)) return 2;    // 次低
+        return 0;                        // Model 等 → 最高优先
+    };
 
-    // 标准化颜色名进行匹配
-    const normalizedColor = colorValue.toLowerCase().trim();
+    const sorted = [...saleAttrs].sort((a, b) => {
+        const pa = getPriority(a);
+        const pb = getPriority(b);
+        if (pa !== pb) return pa - pb;
+        // 同级别内 label=1 优先
+        return (b.attribute_label || 0) - (a.attribute_label || 0);
+    });
 
-    // 1. 精确匹配
-    let matchedValue = skcMainAttr.values.find(v =>
-        v.value_name.toLowerCase() === normalizedColor
-    );
+    // 选第一个有候选值的属性
+    const mainAttr = sorted.find(a => a.values && a.values.length > 0);
+    if (!mainAttr) return null;
 
-    // 2. 包含匹配
-    if (!matchedValue) {
-        matchedValue = skcMainAttr.values.find(v =>
-            v.value_name.toLowerCase().includes(normalizedColor) ||
-            normalizedColor.includes(v.value_name.toLowerCase())
+    // 尝试从产品属性中找匹配值
+    const matchKey = isColorAttr(mainAttr) ? 'color' : mainAttr.attribute_name.toLowerCase();
+    const pAttr = productAttrs.find(p => {
+        const pk = p.key.toLowerCase();
+        return pk === matchKey || pk.includes(matchKey) || matchKey.includes(pk);
+    });
+
+    const searchValue = pAttr?.value || '';
+
+    if (searchValue && mainAttr.values) {
+        const normalizedValue = searchValue.toLowerCase().trim();
+
+        // 精确匹配
+        let matchedValue = mainAttr.values.find(v =>
+            v.value_name.toLowerCase() === normalizedValue
         );
-    }
 
-    // 3. 别名匹配
-    if (!matchedValue) {
-        for (const [stdName, aliases] of Object.entries(COLOR_ALIASES)) {
-            const isMatch = normalizedColor === stdName ||
-                aliases.some(a => normalizedColor.includes(a) || a.includes(normalizedColor));
-            if (isMatch) {
-                // 在候选值中找与标准英文名或别名匹配的
-                matchedValue = skcMainAttr.values.find(v => {
-                    const vLower = v.value_name.toLowerCase();
-                    return vLower === stdName ||
-                        vLower.includes(stdName) ||
-                        aliases.some(a => vLower.includes(a));
-                });
-                if (matchedValue) break;
+        // 包含匹配
+        if (!matchedValue) {
+            matchedValue = mainAttr.values.find(v =>
+                v.value_name.toLowerCase().includes(normalizedValue) ||
+                normalizedValue.includes(v.value_name.toLowerCase())
+            );
+        }
+
+        // 颜色专用：别名匹配
+        if (!matchedValue && isColorAttr(mainAttr)) {
+            for (const [stdName, aliases] of Object.entries(COLOR_ALIASES)) {
+                const isMatch = normalizedValue === stdName ||
+                    aliases.some(a => normalizedValue.includes(a) || a.includes(normalizedValue));
+                if (isMatch) {
+                    matchedValue = mainAttr.values.find(v => {
+                        const vLower = v.value_name.toLowerCase();
+                        return vLower === stdName ||
+                            vLower.includes(stdName) ||
+                            aliases.some(a => vLower.includes(a));
+                    });
+                    if (matchedValue) break;
+                }
             }
+        }
+
+        if (matchedValue) {
+            return {
+                attribute_id: mainAttr.attribute_id,
+                attribute_value_id: matchedValue.value_id,
+                _display_name: mainAttr.attribute_name,
+                _display_value: matchedValue.value_name,
+            };
+        }
+
+        // 自定义值（仅限颜色）
+        if (isColorAttr(mainAttr)) {
+            return {
+                attribute_id: mainAttr.attribute_id,
+                attribute_value_id: 0,
+                custom_attribute_value: searchValue,
+                _display_name: mainAttr.attribute_name,
+                _display_value: `${searchValue} (自定义)`,
+            };
         }
     }
 
-    // 4. 如果仍未匹配，使用 custom_attribute_value（自定义值）
-    if (!matchedValue) {
+    // 没匹配到任何值，返回第一个候选值作为默认
+    if (mainAttr.values && mainAttr.values.length > 0) {
+        const firstValid = mainAttr.values.find(v => v.value_name && v.value_name.trim() !== '') || mainAttr.values[0];
         return {
-            attribute_id: skcMainAttr.attribute_id,
-            attribute_value_id: 0,
-            custom_attribute_value: colorValue,
-            _display_name: skcMainAttr.attribute_name,
-            _display_value: `${colorValue} (自定义)`,
+            attribute_id: mainAttr.attribute_id,
+            attribute_value_id: firstValid.value_id,
+            _display_name: mainAttr.attribute_name,
+            _display_value: firstValid.value_name,
         };
     }
 
-    return {
-        attribute_id: skcMainAttr.attribute_id,
-        attribute_value_id: matchedValue.value_id,
-        _display_name: skcMainAttr.attribute_name,
-        _display_value: matchedValue.value_name,
-    };
+    return null;
 }
 
 /**
@@ -586,8 +732,12 @@ export function autoMatchSkuSaleAttributes(
 
 // ===== AI 商品属性匹配 =====
 
-/** 使用简单名称匹配将产品属性映射到模板属性（输出格式符合 SHEIN API）
- *  增强：对未匹配的必填属性(req=true)，自动选择 fallback 值
+/** 使用名称匹配将产品属性映射到模板属性（输出格式符合 SHEIN API）
+ *
+ * 完整处理所有属性类型：
+ * - type=2：尺寸/手动输入 → attribute_extra_value (数值/文本)
+ * - type=3：成分属性 → attribute_value_id + attribute_extra_value (百分比, 总和=100%)
+ * - type=4：普通属性 → attribute_value_id 或 attribute_extra_value (mode=0 手动)
  */
 export function autoMatchAttributes(
     productAttrs: { key: string; value: string }[],
@@ -596,95 +746,128 @@ export function autoMatchAttributes(
     const matched: { attribute_id: number; attribute_value_id: number; attribute_extra_value?: string; _display_name?: string; _display_value?: string }[] = [];
     const matchedIds = new Set<number>();
 
-    // 关键词映射：产品属性英文/西班牙文 → 可能的模板属性名
+    // 关键词映射
     const keywordMap: Record<string, string[]> = {
-        'material': ['composition', 'other materials', 'materials'],
-        'Material': ['Composition', 'Other Materials'],
+        'material': ['composition', 'other materials', 'materials', 'fit type'],
+        'Material': ['Composition', 'Other Materials', 'Fit Type'],
         'Marca': ['Brand'],
         'Color': ['Color'],
         'Peso': ['Weight'],
-        'Dimensiones': ['Dimensions'],
+        'Dimensiones': ['Dimensions', 'Diameter', 'Height', 'Width', 'Length'],
     };
 
+    // type=2 尺寸属性的智能默认值
+    const dimensionDefaults: Record<number, string> = {
+        32: '10', 48: '10', 118: '15', 55: '25',
+        1000439: 'N/A', 1000186: 'N/A',
+    };
+
+    // 查找产品属性的辅助函数
+    const findProductAttr = (tAttr: SheinAttribute) => productAttrs.find(p => {
+        const pk = p.key.toLowerCase();
+        const tk = tAttr.attribute_name.toLowerCase();
+        if (pk === tk || pk.includes(tk) || tk.includes(pk)) return true;
+        const keys = keywordMap[p.key] || keywordMap[pk];
+        return keys ? keys.some(mk => tk.includes(mk.toLowerCase())) : false;
+    });
+
+    // ===== PASS 1: type=3 和 type=4 有候选值 =====
     for (const tAttr of templateAttrs) {
-        // 只处理类型 3 (成分) 和 4 (普通) 的属性
         if (tAttr.attribute_type !== 3 && tAttr.attribute_type !== 4) continue;
+        const pAttr = findProductAttr(tAttr);
 
-        // 查找产品中名称相似的属性（包括跨语言映射）
-        const pAttr = productAttrs.find(p => {
-            const pk = p.key.toLowerCase();
-            const tk = tAttr.attribute_name.toLowerCase();
-            // 直接名称匹配
-            if (pk === tk || pk.includes(tk) || tk.includes(pk)) return true;
-            // 关键词映射匹配
-            const mappedKeys = keywordMap[p.key] || keywordMap[pk];
-            if (mappedKeys) {
-                return mappedKeys.some(mk => tk.includes(mk.toLowerCase()));
-            }
-            return false;
-        });
-
+        // 有候选值 → 尝试匹配值
         if (pAttr && tAttr.values && tAttr.values.length > 0) {
-            // 尝试匹配属性值
             const matchedValue = tAttr.values.find(v =>
                 v.value_name.toLowerCase() === pAttr.value.toLowerCase() ||
                 v.value_name.toLowerCase().includes(pAttr.value.toLowerCase()) ||
                 pAttr.value.toLowerCase().includes(v.value_name.toLowerCase())
             );
-
             if (matchedValue) {
                 matched.push({
                     attribute_id: tAttr.attribute_id,
                     attribute_value_id: matchedValue.value_id,
+                    ...(tAttr.attribute_type === 3 ? { attribute_extra_value: '100' } : {}),
                     _display_name: tAttr.attribute_name,
-                    _display_value: matchedValue.value_name,
+                    _display_value: matchedValue.value_name + (tAttr.attribute_type === 3 ? ' (100%)' : ''),
                 });
                 matchedIds.add(tAttr.attribute_id);
+                continue;
             }
+        }
+
+        // mode=0 无候选值 → 手动输入
+        if (tAttr.attribute_mode === 0 && (!tAttr.values || tAttr.values.length === 0) && tAttr.is_required) {
+            matched.push({
+                attribute_id: tAttr.attribute_id,
+                attribute_value_id: 0,
+                attribute_extra_value: pAttr?.value || 'N/A',
+                _display_name: tAttr.attribute_name,
+                _display_value: `${pAttr?.value || 'N/A'} (手动)`,
+            });
+            matchedIds.add(tAttr.attribute_id);
         }
     }
 
-    // 补齐必填属性：对未匹配的 req=true 属性，尝试 fallback
-    const fallbackNames = ['other', 'unspecified', 'n/a', 'none', 'not applicable', 'desconocido'];
-    // 特定属性的智能默认值
-    const smartDefaults: Record<number, string[]> = {
-        1000565: ['non-foaming', 'non'],          // It's foam → Non-Foaming
-        1000411: [],                                // Quantity → 取第一个
-        1000062: [],                                // Weaving method → 取第一个
-    };
+    // ===== PASS 2: type=2 尺寸/手动输入属性 =====
+    for (const tAttr of templateAttrs) {
+        if (tAttr.attribute_type !== 2 || !tAttr.is_required) continue;
+        if (matchedIds.has(tAttr.attribute_id)) continue;
+
+        const pAttr = findProductAttr(tAttr);
+        let extraValue = pAttr?.value || dimensionDefaults[tAttr.attribute_id] || '10';
+
+        // 提取数值
+        const numMatch = extraValue.match(/[\d.]+/);
+        if (numMatch && /cm|diameter|height|width|length/i.test(tAttr.attribute_name)) {
+            extraValue = numMatch[0];
+        }
+
+        matched.push({
+            attribute_id: tAttr.attribute_id,
+            attribute_value_id: 0,
+            attribute_extra_value: extraValue,
+            _display_name: tAttr.attribute_name,
+            _display_value: `${extraValue} (自动)`,
+        });
+        matchedIds.add(tAttr.attribute_id);
+    }
+
+    // ===== PASS 3: 补齐必填属性 fallback =====
+    const fallbackNames = ['other', 'unspecified', 'n/a', 'none', 'not applicable'];
 
     for (const tAttr of templateAttrs) {
-        if (tAttr.attribute_type !== 3 && tAttr.attribute_type !== 4) continue;
         if (matchedIds.has(tAttr.attribute_id)) continue;
         if (!tAttr.is_required) continue;
-        if (!tAttr.values || tAttr.values.length === 0) continue;
+        if (tAttr.attribute_type === 1) continue; // 销售属性另外处理
 
-        // 1. 查找 "Other"/"Unspecified" 等通用 fallback
+        // 无候选值的必填属性 → 手动输入
+        if (!tAttr.values || tAttr.values.length === 0) {
+            const defaultVal = dimensionDefaults[tAttr.attribute_id] || 'N/A';
+            matched.push({
+                attribute_id: tAttr.attribute_id,
+                attribute_value_id: 0,
+                attribute_extra_value: defaultVal,
+                _display_name: tAttr.attribute_name,
+                _display_value: `${defaultVal} (默认)`,
+            });
+            matchedIds.add(tAttr.attribute_id);
+            continue;
+        }
+
+        // 有候选值 → fallback 选择
         let fallback = tAttr.values.find(v =>
             fallbackNames.some(fn => v.value_name.toLowerCase().includes(fn))
         );
-
-        // 2. 查找特定属性的智能默认值
-        if (!fallback && smartDefaults[tAttr.attribute_id]) {
-            const hints = smartDefaults[tAttr.attribute_id];
-            if (hints.length > 0) {
-                fallback = tAttr.values.find(v =>
-                    hints.some(h => v.value_name.toLowerCase().includes(h))
-                );
-            }
-        }
-
-        // 3. 最终 fallback：取第一个值
-        if (!fallback) {
-            fallback = tAttr.values[0];
-        }
+        if (!fallback) fallback = tAttr.values[0];
 
         if (fallback) {
             matched.push({
                 attribute_id: tAttr.attribute_id,
                 attribute_value_id: fallback.value_id,
+                ...(tAttr.attribute_type === 3 ? { attribute_extra_value: '100' } : {}),
                 _display_name: tAttr.attribute_name,
-                _display_value: `${fallback.value_name} (自动)`,
+                _display_value: `${fallback.value_name} (自动)` + (tAttr.attribute_type === 3 ? ' (100%)' : ''),
             });
             matchedIds.add(tAttr.attribute_id);
         }

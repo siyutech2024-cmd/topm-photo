@@ -5,7 +5,7 @@
  * 产品分析时直接从本地读取，无需每次调 API。
  */
 
-import { fetchCategories, flattenCategories, fetchAttributes } from './sheinApiService';
+import { fetchCategories, flattenCategories, fetchAttributes, getMainAttrStatusFromCache, fetchMainAttrStatusBatch } from './sheinApiService';
 import type { SheinAttribute } from './sheinApiService';
 
 // ===== IndexedDB 初始化 =====
@@ -27,6 +27,7 @@ export interface CachedCategory {
 export interface CachedAttributeSet {
     productTypeId: number;
     attributes: SheinAttribute[];
+    mainAttrStatus?: number;   // 主规格状态: 3=禁用
     syncedAt: string;
 }
 
@@ -190,9 +191,11 @@ export async function syncAttributes(
 
         try {
             const attrs = await fetchAttributes(ptId);
+            const mainStatus = getMainAttrStatusFromCache(ptId);
             const cached: CachedAttributeSet = {
                 productTypeId: ptId,
                 attributes: attrs,
+                mainAttrStatus: mainStatus,
                 syncedAt: new Date().toISOString(),
             };
             await putAll(STORE_ATTRIBUTES, [cached]);
@@ -236,6 +239,61 @@ export async function syncAll(
     return { categories: catCount, attributes: attrCount };
 }
 
+/**
+ * 轻量级同步：仅获取所有 ptId 的 main_attribute_status
+ * 不重新拉取完整属性列表，只更新主规格状态
+ * 比 syncAll 快 10 倍以上（批量查询 + 不解析属性）
+ */
+export async function syncMainAttrStatusOnly(
+    onProgress?: (msg: string) => void
+): Promise<number> {
+    // 1. 从本地 JSON 获取所有 ptId
+    let allPtIds: number[] = [];
+    try {
+        const resp = await import('../data/shein_attributes.json');
+        const rawData = (resp.default || resp) as unknown as Array<{ ptId: number }>;
+        allPtIds = rawData.map(d => d.ptId);
+    } catch {
+        // 从 IndexedDB fallback
+        const allSets = await getAll<CachedAttributeSet>(STORE_ATTRIBUTES);
+        allPtIds = allSets.map(s => s.productTypeId);
+    }
+
+    if (allPtIds.length === 0) {
+        onProgress?.('⚠️ 没有找到任何 ptId');
+        return 0;
+    }
+
+    onProgress?.(`🔄 准备批量获取 ${allPtIds.length} 个 ptId 的主规格状态...`);
+
+    // 2. 批量 API 获取
+    const statusMap = await fetchMainAttrStatusBatch(allPtIds, onProgress);
+
+    // 3. 更新 IndexedDB 中的 CachedAttributeSet
+    const db = await openDB();
+    let updated = 0;
+    for (const [ptId, status] of statusMap) {
+        try {
+            const cached = await new Promise<CachedAttributeSet | undefined>((resolve, reject) => {
+                const tx = db.transaction(STORE_ATTRIBUTES, 'readonly');
+                const req = tx.objectStore(STORE_ATTRIBUTES).get(ptId);
+                req.onsuccess = () => resolve(req.result as CachedAttributeSet | undefined);
+                req.onerror = () => reject(req.error);
+            });
+            if (cached) {
+                cached.mainAttrStatus = status;
+                await putAll(STORE_ATTRIBUTES, [cached]);
+                updated++;
+            }
+        } catch { /* skip */ }
+    }
+
+    // 4. 统计结果
+    const disabledCount = [...statusMap.values()].filter(s => s === 3).length;
+    onProgress?.(`✅ 已更新 ${statusMap.size} 个 ptId 的主规格状态 (${disabledCount} 个主规格禁用)`);
+    return statusMap.size;
+}
+
 // ===== 属性数据文件导出/导入 =====
 
 /**
@@ -261,6 +319,7 @@ export async function exportAttributesToFile(): Promise<void> {
     // 转换为精简格式
     const exportData = allSets.map(s => ({
         ptId: s.productTypeId,
+        ...(s.mainAttrStatus !== undefined ? { mainAttrStatus: s.mainAttrStatus } : {}),
         attrs: s.attributes.map(a => ({
             id: a.attribute_id,
             name: a.attribute_name,
@@ -298,6 +357,7 @@ export async function loadBundledAttributes(
 
     let rawData: Array<{
         ptId: number;
+        mainAttrStatus?: number;
         attrs: Array<{
             id: number;
             name: string;
@@ -335,6 +395,7 @@ export async function loadBundledAttributes(
         const cached: CachedAttributeSet = {
             productTypeId: item.ptId,
             attributes: attrs,
+            mainAttrStatus: item.mainAttrStatus,
             syncedAt: new Date().toISOString(),
         };
         await putAll(STORE_ATTRIBUTES, [cached]);
@@ -356,49 +417,88 @@ export async function getLocalCategories(): Promise<CachedCategory[]> {
 }
 
 export async function getLocalAttributes(productTypeId: number): Promise<SheinAttribute[]> {
-    // 1. 先从 IndexedDB 查找
-    const db = await openDB();
-    const cached = await new Promise<CachedAttributeSet | undefined>((resolve, reject) => {
-        const tx = db.transaction(STORE_ATTRIBUTES, 'readonly');
-        const req = tx.objectStore(STORE_ATTRIBUTES).get(productTypeId);
-        req.onsuccess = () => resolve(req.result as CachedAttributeSet | undefined);
-        req.onerror = () => reject(req.error);
-    });
-
-    if (cached?.attributes?.length) {
-        return cached.attributes;
-    }
-
-    // 2. IndexedDB 没有 → 从打包文件加载
+    // 1. 优先从打包 JSON 文件读取（scripts 更新过的最新数据）
     try {
         const resp = await import('../data/shein_attributes.json');
-        const rawData: Array<{
+        const rawData = (resp.default || resp) as unknown as Array<{
             ptId: number;
             attrs: Array<{
                 id: number; name: string; type: number;
                 label: number; mode: number; req: boolean;
                 vals: Array<{ id: number; name: string }>;
             }>;
-        }> = resp.default || resp;
+        }>;
 
         const item = rawData.find(d => d.ptId === productTypeId);
-        if (!item) return [];
+        if (item && item.attrs.length > 0) {
+            return item.attrs.map(a => ({
+                attribute_id: a.id,
+                attribute_name: a.name,
+                attribute_type: a.type,
+                attribute_label: a.label ?? 0,
+                attribute_mode: a.mode ?? 1,
+                is_required: a.req,
+                values: (a.vals || []).map(v => ({
+                    value_id: v.id,
+                    value_name: v.name,
+                })),
+            }));
+        }
+    } catch { /* fallback to IndexedDB */ }
 
-        return item.attrs.map(a => ({
-            attribute_id: a.id,
-            attribute_name: a.name,
-            attribute_type: a.type,
-            attribute_label: a.label ?? 0,
-            attribute_mode: a.mode ?? 1,
-            is_required: a.req,
-            values: (a.vals || []).map(v => ({
-                value_id: v.id,
-                value_name: v.name,
-            })),
-        }));
-    } catch {
-        return [];
-    }
+    // 2. JSON 没有 → 从 IndexedDB 查找
+    try {
+        const db = await openDB();
+        const cached = await new Promise<CachedAttributeSet | undefined>((resolve, reject) => {
+            const tx = db.transaction(STORE_ATTRIBUTES, 'readonly');
+            const req = tx.objectStore(STORE_ATTRIBUTES).get(productTypeId);
+            req.onsuccess = () => resolve(req.result as CachedAttributeSet | undefined);
+            req.onerror = () => reject(req.error);
+        });
+
+        if (cached?.attributes?.length) {
+            return cached.attributes;
+        }
+    } catch { /* no data */ }
+
+    return [];
+}
+
+/**
+ * 获取指定 productTypeId 的主规格状态
+ * 返回 mainAttrStatus 数值：3 = 主规格禁用（不需要 SKC 主销售属性）
+ * 如果没找到，返回 undefined（表示走默认流程）
+ */
+export async function getLocalMainAttrStatus(productTypeId: number): Promise<number | undefined> {
+    // 1. 优先从打包 JSON 文件读取（scripts 更新过的最新数据）
+    try {
+        const resp = await import('../data/shein_attributes.json');
+        const rawData = (resp.default || resp) as unknown as Array<{
+            ptId: number;
+            mainAttrStatus?: number;
+        }>;
+
+        const item = rawData.find(d => d.ptId === productTypeId);
+        if (item?.mainAttrStatus !== undefined) {
+            return item.mainAttrStatus;
+        }
+    } catch { /* fallback */ }
+
+    // 2. 从 IndexedDB 查找
+    try {
+        const db = await openDB();
+        const cached = await new Promise<CachedAttributeSet | undefined>((resolve, reject) => {
+            const tx = db.transaction(STORE_ATTRIBUTES, 'readonly');
+            const req = tx.objectStore(STORE_ATTRIBUTES).get(productTypeId);
+            req.onsuccess = () => resolve(req.result as CachedAttributeSet | undefined);
+            req.onerror = () => reject(req.error);
+        });
+        if (cached?.mainAttrStatus !== undefined) {
+            return cached.mainAttrStatus;
+        }
+    } catch { /* no data */ }
+
+    return undefined;
 }
 
 export async function getLastSyncTime(): Promise<string | null> {
