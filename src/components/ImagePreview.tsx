@@ -11,10 +11,27 @@ export default function ImagePreview({ productImages, effectImages, gridImages =
     const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
     const handleDownload = (src: string, name: string) => {
-        const a = document.createElement('a');
-        a.href = src;
-        a.download = name;
-        a.click();
+        // 将 base64/data URL 转为 Blob，确保下载为标准图片格式
+        if (src.startsWith('data:')) {
+            const parts = src.split(',');
+            const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+            const bstr = atob(parts[1]);
+            const u8arr = new Uint8Array(bstr.length);
+            for (let i = 0; i < bstr.length; i++) u8arr[i] = bstr.charCodeAt(i);
+            const blob = new Blob([u8arr], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = name;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } else {
+            // 普通 URL 直接下载
+            const a = document.createElement('a');
+            a.href = src;
+            a.download = name;
+            a.click();
+        }
     };
 
     const gridLabels = ['九宫格场景图 (3×3)'];

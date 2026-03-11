@@ -13,8 +13,8 @@ export async function exportProductsToExcel(products: Product[]): Promise<void> 
         '货币': p.currency,
         '类目': p.category,
         '状态': p.status === 'draft' ? '草稿' : p.status === 'generated' ? '已生成' : '已发布',
-        '产品图数量': p.product_images.length,
-        '效果图数量': p.effect_images.length,
+        '产品图数量': (p.product_images || []).length,
+        '效果图数量': (p.effect_images || []).length,
         '创建时间': new Date(p.created_at).toLocaleString('zh-CN'),
         ...Object.fromEntries(p.attributes.map(a => [a.key, a.value])),
     }));
@@ -62,8 +62,8 @@ export async function exportProductsWithImages(products: Product[]): Promise<voi
         '货币': p.currency,
         '类目': p.category,
         '状态': p.status === 'draft' ? '草稿' : p.status === 'generated' ? '已生成' : '已发布',
-        '产品图文件名': Array.from({ length: p.product_images.length }, (_, i) => `产品图_${i + 1}.jpg`).join(', '),
-        '效果图文件名': Array.from({ length: p.effect_images.length }, (_, i) => `效果图_${i + 1}.jpg`).join(', '),
+        '产品图文件名': Array.from({ length: (p.product_images || []).length }, (_, i) => `产品图_${i + 1}.jpg`).join(', '),
+        '效果图文件名': Array.from({ length: (p.effect_images || []).length }, (_, i) => `效果图_${i + 1}.jpg`).join(', '),
         '创建时间': new Date(p.created_at).toLocaleString('zh-CN'),
         ...Object.fromEntries(p.attributes.map(a => [a.key, a.value])),
     }));
@@ -80,17 +80,17 @@ export async function exportProductsWithImages(products: Product[]): Promise<voi
         const productFolder = zip.folder(folderName)!;
 
         const origFolder = productFolder.folder('原始图片')!;
-        for (let i = 0; i < product.original_images.length; i++) {
+        for (let i = 0; i < (product.original_images || []).length; i++) {
             origFolder.file(`原图_${i + 1}.jpg`, await imageToBlob(product.original_images[i]));
         }
 
         const prodImgFolder = productFolder.folder('产品图')!;
-        for (let i = 0; i < product.product_images.length; i++) {
+        for (let i = 0; i < (product.product_images || []).length; i++) {
             prodImgFolder.file(`产品图_${i + 1}.jpg`, await imageToBlob(product.product_images[i]));
         }
 
         const effectFolder = productFolder.folder('效果图')!;
-        for (let i = 0; i < product.effect_images.length; i++) {
+        for (let i = 0; i < (product.effect_images || []).length; i++) {
             effectFolder.file(`效果图_${i + 1}.jpg`, await imageToBlob(product.effect_images[i]));
         }
     }
