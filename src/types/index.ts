@@ -58,6 +58,9 @@ export interface Product {
   // SHEIN AI 自动匹配 (可选)
   shein_category_id?: number;
   shein_product_type_id?: number;
+  // 多语言扩展 (可选，用于 SHEIN zh-cn)
+  titleZh?: string;
+  descriptionZh?: string;
 }
 
 export interface GenerationResult {

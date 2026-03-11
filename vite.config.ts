@@ -6,5 +6,13 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5174,
+    proxy: {
+      '/api/production': {
+        target: 'https://topm.tech',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/production/, '/demo7.php'),
+        secure: true,
+      },
+    },
   },
 })

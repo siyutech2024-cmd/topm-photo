@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ImagePlus, Package, Settings, Sparkles, FileJson, Layers } from 'lucide-react';
+import { LayoutDashboard, ImagePlus, Package, Settings, Sparkles, FileJson, Layers, FlaskConical } from 'lucide-react';
 
 export default function Sidebar() {
     return (
@@ -40,6 +40,14 @@ export default function Sidebar() {
                     <NavLink to="/batch-generator" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                         <Layers />
                         <span>批量生成</span>
+                    </NavLink>
+                </div>
+
+                <div className="nav-section">
+                    <div className="nav-section-title">开发工具</div>
+                    <NavLink to="/api-tester" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                        <FlaskConical />
+                        <span>API 测试</span>
                     </NavLink>
                 </div>
 

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Upload, FileJson, Download, Copy, Check, Loader, AlertTriangle, CheckCircle, Search, ChevronDown, ChevronUp, Trash2, Clock, Eye } from 'lucide-react';
+import { Upload, FileJson, Download, Copy, Check, Loader, AlertTriangle, CheckCircle, Search, ChevronDown, ChevronUp, Trash2, Clock, Eye, Edit3 } from 'lucide-react';
 import { getCategoryListForAI, loadBundledCategories } from '../services/sheinCacheService';
 import { getLocalCategories, getLocalAttributes, getLocalMainAttrStatus, searchLocalCategories } from '../services/sheinCacheService';
 import { autoMatchAttributes, autoMatchSaleAttribute, autoMatchSkuSaleAttributes, buildSheinJson, downloadJsonFile } from '../services/sheinApiService';
@@ -10,6 +10,9 @@ import { copyToClipboard } from '../services/platformService';
 import { hasGeminiAccess, callGeminiForProductInfo, callGeminiTextOnly } from '../services/geminiService';
 import type { ProductData } from '../services/geminiService';
 import type { CachedCategory } from '../services/sheinCacheService';
+import { createProduct } from '../services/productService';
+import { ManualAttributeEditor } from '../components/ManualAttributeEditor';
+import type { MatchedAttribute, TemplateAttribute } from '../components/ManualAttributeEditor';
 
 export default function JsonGenerator() {
     // 图片上传
@@ -45,6 +48,10 @@ export default function JsonGenerator() {
     const [tiktokGeneratedJson, setTiktokGeneratedJson] = useState<Record<string, unknown> | null>(null);
     const [showTiktokJson, setShowTiktokJson] = useState(false);
     const [tiktokCopied, setTiktokCopied] = useState(false);
+
+    // 属性编辑器
+    const [showSheinAttrEditor, setShowSheinAttrEditor] = useState(false);
+    const [showTiktokAttrEditor, setShowTiktokAttrEditor] = useState(false);
 
     // SKU/价格 可编辑
     const [skuCode, setSkuCode] = useState('TOPM-001');
@@ -447,6 +454,23 @@ Devuelve en formato JSON:
             json: jsonRecord,
         };
         saveHistory([item, ...history]);
+
+        // 同步到产品管理系统
+        createProduct({
+            title: `[TikTok] ${productData.title}`,
+            description: productData.description,
+            price: editPrice || productData.price,
+            currency: 'USD',
+            category: tiktokCategory.path,
+            attributes: productData.attributes,
+            original_images: images,
+            product_images: images,
+            effect_images: [],
+            grid_images: [],
+            status: 'generated',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        }).catch(err => console.warn('同步到产品管理失败:', err));
     };
 
     const handleTiktokDownload = () => {
@@ -524,6 +548,23 @@ Devuelve en formato JSON:
             json: jsonRecord,
         };
         saveHistory([item, ...history]);
+
+        // 同步到产品管理系统
+        createProduct({
+            title: productData.title,
+            description: productData.description,
+            price: editPrice || productData.price,
+            currency: 'USD',
+            category: matchedCategory.label,
+            attributes: productData.attributes,
+            original_images: images,
+            product_images: images,
+            effect_images: [],
+            grid_images: [],
+            status: 'generated',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        }).catch(err => console.warn('同步到产品管理失败:', err));
     };
 
     const handleDownload = () => {
@@ -737,21 +778,51 @@ Devuelve en formato JSON:
                                     {/* 匹配属性标签 */}
                                     {matchedAttrs.length > 0 && (
                                         <div style={{ marginBottom: 'var(--space-sm)' }}>
-                                            <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginBottom: '4px' }}>
-                                                🏷️ {matchedAttrs.length} 个属性已匹配
-                                            </p>
-                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
-                                                {matchedAttrs.slice(0, 6).map((a, i) => (
-                                                    <span key={i} style={{ fontSize: '0.62rem', padding: '2px 6px', background: 'rgba(16,185,129,0.1)', borderRadius: '10px', color: '#10b981' }}>
-                                                        {a._display_name}: {a._display_value}
-                                                    </span>
-                                                ))}
-                                                {matchedAttrs.length > 6 && (
-                                                    <span style={{ fontSize: '0.62rem', padding: '2px 6px', color: 'var(--color-text-muted)' }}>
-                                                        +{matchedAttrs.length - 6}
-                                                    </span>
-                                                )}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                                <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                                                    🏷️ {matchedAttrs.length} 个属性已匹配
+                                                </p>
+                                                <button
+                                                    className="btn btn-secondary btn-sm"
+                                                    onClick={() => setShowSheinAttrEditor(!showSheinAttrEditor)}
+                                                    style={{ fontSize: '0.62rem', padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '3px' }}
+                                                >
+                                                    <Edit3 size={10} /> {showSheinAttrEditor ? '收起' : '✏️ 编辑属性'}
+                                                </button>
                                             </div>
+                                            {!showSheinAttrEditor && (
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
+                                                    {matchedAttrs.slice(0, 6).map((a, i) => (
+                                                        <span key={i} style={{ fontSize: '0.62rem', padding: '2px 6px', background: 'rgba(16,185,129,0.1)', borderRadius: '10px', color: '#10b981' }}>
+                                                            {a._display_name}: {a._display_value}
+                                                        </span>
+                                                    ))}
+                                                    {matchedAttrs.length > 6 && (
+                                                        <span style={{ fontSize: '0.62rem', padding: '2px 6px', color: 'var(--color-text-muted)' }}>
+                                                            +{matchedAttrs.length - 6}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {showSheinAttrEditor && matchedCategory && productData && (
+                                                <ManualAttributeEditor
+                                                    matchedAttrs={matchedAttrs as MatchedAttribute[]}
+                                                    templateAttrs={allAttrs as unknown as TemplateAttribute[]}
+                                                    productData={{
+                                                        title: productData.title,
+                                                        description: productData.description,
+                                                        category: productData.category,
+                                                        attributes: productData.attributes,
+                                                        shein_category_id: matchedCategory.categoryId,
+                                                        shein_product_type_id: matchedCategory.productTypeId,
+                                                    }}
+                                                    onAttributesUpdated={(updated) => {
+                                                        setMatchedAttrs(updated as typeof matchedAttrs);
+                                                        setGeneratedJson(null); // 清除旧 JSON
+                                                    }}
+                                                    platform="shein"
+                                                />
+                                            )}
                                         </div>
                                     )}
 
@@ -847,21 +918,50 @@ Devuelve en formato JSON:
                                     {/* TikTok 匹配属性标签 */}
                                     {tiktokMatchedAttrs.length > 0 && (
                                         <div style={{ marginBottom: 'var(--space-sm)' }}>
-                                            <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginBottom: '4px' }}>
-                                                🏷️ {tiktokMatchedAttrs.length} 个属性已匹配
-                                            </p>
-                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
-                                                {tiktokMatchedAttrs.slice(0, 6).map((a, i) => (
-                                                    <span key={i} style={{ fontSize: '0.62rem', padding: '2px 6px', background: 'rgba(255,0,79,0.08)', borderRadius: '10px', color: '#ff004f' }}>
-                                                        {a._display_name}: {a._display_value}
-                                                    </span>
-                                                ))}
-                                                {tiktokMatchedAttrs.length > 6 && (
-                                                    <span style={{ fontSize: '0.62rem', padding: '2px 6px', color: 'var(--color-text-muted)' }}>
-                                                        +{tiktokMatchedAttrs.length - 6}
-                                                    </span>
-                                                )}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                                <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                                                    🏷️ {tiktokMatchedAttrs.length} 个属性已匹配
+                                                </p>
+                                                <button
+                                                    className="btn btn-secondary btn-sm"
+                                                    onClick={() => setShowTiktokAttrEditor(!showTiktokAttrEditor)}
+                                                    style={{ fontSize: '0.62rem', padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '3px' }}
+                                                >
+                                                    <Edit3 size={10} /> {showTiktokAttrEditor ? '收起' : '✏️ 编辑属性'}
+                                                </button>
                                             </div>
+                                            {!showTiktokAttrEditor && (
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
+                                                    {tiktokMatchedAttrs.slice(0, 6).map((a, i) => (
+                                                        <span key={i} style={{ fontSize: '0.62rem', padding: '2px 6px', background: 'rgba(255,0,79,0.08)', borderRadius: '10px', color: '#ff004f' }}>
+                                                            {a._display_name}: {a._display_value}
+                                                        </span>
+                                                    ))}
+                                                    {tiktokMatchedAttrs.length > 6 && (
+                                                        <span style={{ fontSize: '0.62rem', padding: '2px 6px', color: 'var(--color-text-muted)' }}>
+                                                            +{tiktokMatchedAttrs.length - 6}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {showTiktokAttrEditor && tiktokCategory && productData && (
+                                                <ManualAttributeEditor
+                                                    matchedAttrs={tiktokMatchedAttrs as MatchedAttribute[]}
+                                                    templateAttrs={[] as TemplateAttribute[]}
+                                                    productData={{
+                                                        title: productData.title,
+                                                        description: productData.description,
+                                                        category: productData.category,
+                                                        attributes: productData.attributes,
+                                                        tiktok_category_id: tiktokCategory.catId,
+                                                    }}
+                                                    onAttributesUpdated={(updated) => {
+                                                        setTiktokMatchedAttrs(updated as typeof tiktokMatchedAttrs);
+                                                        setTiktokGeneratedJson(null);
+                                                    }}
+                                                    platform="tiktok"
+                                                />
+                                            )}
                                         </div>
                                     )}
 

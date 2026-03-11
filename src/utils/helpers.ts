@@ -1,18 +1,28 @@
-export function formatDate(date: Date): string {
-    return new Intl.DateTimeFormat('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-    }).format(new Date(date));
+export function formatDate(date: Date | string | undefined | null): string {
+    if (!date) return '-';
+    try {
+        return new Intl.DateTimeFormat('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        }).format(new Date(date));
+    } catch {
+        return '-';
+    }
 }
 
-export function formatPrice(price: number, currency: string = 'CNY'): string {
-    return new Intl.NumberFormat('zh-CN', {
-        style: 'currency',
-        currency,
-    }).format(price);
+export function formatPrice(price: number | undefined | null, currency: string = 'CNY'): string {
+    if (price == null || isNaN(price)) return '$0.00';
+    try {
+        return new Intl.NumberFormat('zh-CN', {
+            style: 'currency',
+            currency: currency || 'CNY',
+        }).format(price);
+    } catch {
+        return `$${price.toFixed(2)}`;
+    }
 }
 
 export function generateId(): string {
@@ -40,7 +50,8 @@ export function base64ToBlob(base64: string): Blob {
     return new Blob([u8arr], { type: mime });
 }
 
-export function truncateText(text: string, maxLength: number): string {
+export function truncateText(text: string | undefined | null, maxLength: number): string {
+    if (!text) return '';
     if (text.length <= maxLength) return text;
     return text.substring(0, maxLength) + '...';
 }

@@ -19,8 +19,13 @@ export default function ProductList() {
 
     async function loadProducts() {
         setLoading(true);
-        const data = await getAllProducts();
-        setProducts(data);
+        try {
+            const data = await getAllProducts();
+            setProducts(data);
+        } catch (err) {
+            console.warn('加载产品失败:', err);
+            setProducts([]);
+        }
         setLoading(false);
     }
 
@@ -159,8 +164,8 @@ export default function ProductList() {
                                         </td>
                                         <td>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-                                                {product.product_images.length > 0 ? (
-                                                    <img src={product.product_images[0]} alt="" className="product-table-thumb" />
+                                                {(product.product_images || []).length > 0 ? (
+                                                    <img src={(product.product_images || [])[0]} alt="" className="product-table-thumb" />
                                                 ) : (
                                                     <div className="product-table-thumb" style={{ background: 'var(--color-bg-input)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                         <Package size={18} style={{ color: 'var(--color-text-muted)' }} />
@@ -175,7 +180,7 @@ export default function ProductList() {
                                         <td style={{ color: 'var(--color-text-secondary)' }}>{product.category}</td>
                                         <td style={{ fontWeight: 600 }}>{formatPrice(product.price, product.currency)}</td>
                                         <td style={{ color: 'var(--color-text-secondary)' }}>
-                                            {product.product_images.length + product.effect_images.length} 张
+                                            {(product.product_images || []).length + (product.effect_images || []).length} 张
                                         </td>
                                         <td>
                                             <span className={`status-badge ${product.status}`}>
@@ -183,7 +188,7 @@ export default function ProductList() {
                                             </span>
                                         </td>
                                         <td style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
-                                            {formatDate(new Date(product.created_at))}
+                                            {formatDate(product.created_at)}
                                         </td>
                                         <td>
                                             <div style={{ display: 'flex', gap: '4px' }}>

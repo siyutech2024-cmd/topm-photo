@@ -74,19 +74,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    // 读取环境变量
-    const openKey = process.env.SHEIN_OPEN_KEY;
-    const secretKey = process.env.SHEIN_SECRET_KEY;
-
-    if (!openKey || !secretKey) {
-        return res.status(500).json({
-            error: 'SHEIN API keys not configured',
-            hint: 'Set SHEIN_OPEN_KEY and SHEIN_SECRET_KEY in Vercel environment variables',
-        });
-    }
-
     try {
-        const { action, body: requestBody } = req.body;
+        const { action, body: requestBody, openKey: customOpenKey, secretKey: customSecretKey } = req.body;
+
+        // 优先使用请求中的自定义 Key，其次用环境变量
+        const openKey = customOpenKey || process.env.SHEIN_OPEN_KEY;
+        const secretKey = customSecretKey || process.env.SHEIN_SECRET_KEY;
+
+        if (!openKey || !secretKey) {
+            return res.status(500).json({
+                error: 'SHEIN API keys not configured',
+                hint: 'Set SHEIN_OPEN_KEY and SHEIN_SECRET_KEY in Vercel environment variables, or pass openKey/secretKey in request body',
+            });
+        }
 
         if (!action || !ACTION_PATHS[action]) {
             return res.status(400).json({

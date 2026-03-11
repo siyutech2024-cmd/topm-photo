@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import {
     Download, Loader, AlertTriangle, CheckCircle,
-    XCircle, Trash2, FileSpreadsheet, Package, Play, Pause, RotateCcw,
+    XCircle, Trash2, FileSpreadsheet, Package, Play, Pause, RotateCcw, Edit3,
 } from 'lucide-react';
 import { parseFile } from '../services/batchParserService';
 import type { ParsedProduct } from '../services/batchParserService';
@@ -13,6 +13,8 @@ import type { ProcessProductResult } from '../services/geminiService';
 import { downloadJsonFile } from '../services/sheinApiService';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
+import ManualAttributeEditor from '../components/ManualAttributeEditor';
+import type { MatchedAttribute, TemplateAttribute } from '../components/ManualAttributeEditor';
 
 // ===== 类型 =====
 
@@ -52,6 +54,9 @@ export default function BatchJsonGenerator() {
     const doneCount = items.filter(i => i.status === 'done').length;
     const errorCount = items.filter(i => i.status === 'error').length;
     const totalCount = items.length;
+
+    // 属性编辑
+    const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
     // ===== 文件处理 =====
 
@@ -538,6 +543,13 @@ export default function BatchJsonGenerator() {
                                                     {item.sku}
                                                 </span>
                                                 <div style={{ display: 'flex', gap: '3px' }}>
+                                                    <button
+                                                        className="btn btn-secondary btn-sm"
+                                                        style={{ fontSize: '0.55rem', padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '2px' }}
+                                                        onClick={() => setEditingItemId(editingItemId === item.id ? null : item.id)}
+                                                    >
+                                                        <Edit3 size={8} /> 编辑属性
+                                                    </button>
                                                     {item.tiktokJson && (
                                                         <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.55rem', padding: '2px 6px' }} onClick={() => downloadSingle(item, 'tiktok')}>
                                                             <Download size={8} /> TikTok
@@ -558,6 +570,56 @@ export default function BatchJsonGenerator() {
                                                     <span style={{ marginLeft: '8px' }}>🛍️ {item.result.sheinCategory.label?.split(' → ').pop()} ({item.result.sheinMatchedAttrs.length}属性)</span>
                                                 )}
                                             </div>
+                                            {/* 属性编辑器 */}
+                                            {editingItemId === item.id && item.result && (
+                                                <div style={{ marginTop: '6px' }}>
+                                                    {item.result.sheinCategory && item.result.sheinMatchedAttrs.length > 0 && (
+                                                        <ManualAttributeEditor
+                                                            matchedAttrs={item.result.sheinMatchedAttrs as MatchedAttribute[]}
+                                                            templateAttrs={item.result.sheinAllAttrs as unknown as TemplateAttribute[]}
+                                                            productData={{
+                                                                title: item.result.productData.title,
+                                                                description: item.result.productData.description,
+                                                                category: item.result.productData.category,
+                                                                attributes: item.result.productData.attributes,
+                                                                shein_category_id: item.result.sheinCategory.categoryId,
+                                                                shein_product_type_id: item.result.sheinCategory.productTypeId,
+                                                            }}
+                                                            onAttributesUpdated={(updated) => {
+                                                                setItems(prev => prev.map(x => {
+                                                                    if (x.id !== item.id || !x.result) return x;
+                                                                    const newResult = { ...x.result, sheinMatchedAttrs: updated as typeof x.result.sheinMatchedAttrs };
+                                                                    const newSheinJson = buildSheinJsonFromResult(newResult, x.sku, x.price || newResult.productData.price, x.stock ?? 100, x.images || []);
+                                                                    return { ...x, result: newResult, sheinJson: newSheinJson || x.sheinJson };
+                                                                }));
+                                                            }}
+                                                            platform="shein"
+                                                        />
+                                                    )}
+                                                    {item.result.tiktokCategory && item.result.tiktokMatchedAttrs.length > 0 && (
+                                                        <ManualAttributeEditor
+                                                            matchedAttrs={item.result.tiktokMatchedAttrs as MatchedAttribute[]}
+                                                            templateAttrs={[] as TemplateAttribute[]}
+                                                            productData={{
+                                                                title: item.result.productData.title,
+                                                                description: item.result.productData.description,
+                                                                category: item.result.productData.category,
+                                                                attributes: item.result.productData.attributes,
+                                                                tiktok_category_id: item.result.tiktokCategory.catId,
+                                                            }}
+                                                            onAttributesUpdated={(updated) => {
+                                                                setItems(prev => prev.map(x => {
+                                                                    if (x.id !== item.id || !x.result) return x;
+                                                                    const newResult = { ...x.result, tiktokMatchedAttrs: updated as typeof x.result.tiktokMatchedAttrs };
+                                                                    const newTiktokJson = buildTiktokJsonFromResult(newResult, x.sku, x.price || newResult.productData.price, x.stock ?? 100);
+                                                                    return { ...x, result: newResult, tiktokJson: newTiktokJson || x.tiktokJson };
+                                                                }));
+                                                            }}
+                                                            platform="tiktok"
+                                                        />
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
