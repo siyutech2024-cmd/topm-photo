@@ -117,6 +117,9 @@ async function generateImageWithNanoBanana(
 
 // ===== Canvas Fallback 图片处理 =====
 
+/** 图片统一尺寸 */
+const IMG_SIZE = 800;
+
 const PRODUCT_STYLES = [
     { name: '纯白背景', filter: 'brightness(1.1) contrast(1.1) saturate(1.05)', bg: '#ffffff' },
     { name: '渐变背景', filter: 'brightness(1.05) contrast(1.15)', bg: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)' },
@@ -125,46 +128,69 @@ const PRODUCT_STYLES = [
     { name: '高对比', filter: 'brightness(1.02) contrast(1.3) saturate(1.15)', bg: '#f8f8f8' },
 ];
 
+/** 生成纯白底产品图（第一张固定白底，无阴影无水印） */
+async function generateWhiteBgImage(sourceImages: string[]): Promise<string> {
+    const canvas = document.createElement('canvas');
+    canvas.width = IMG_SIZE;
+    canvas.height = IMG_SIZE;
+    const ctx = canvas.getContext('2d')!;
+
+    // 纯白背景
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, IMG_SIZE, IMG_SIZE);
+
+    const img = await loadImage(sourceImages[0]);
+    const padding = 40;
+    const scale = Math.min((IMG_SIZE - padding * 2) / img.width, (IMG_SIZE - padding * 2) / img.height);
+    const w = img.width * scale;
+    const h = img.height * scale;
+
+    // 居中绘制，无滤镜无阴影 → 纯白底效果
+    ctx.drawImage(img, (IMG_SIZE - w) / 2, (IMG_SIZE - h) / 2, w, h);
+
+    return canvas.toDataURL('image/jpeg', 0.95);
+}
+
 async function generateProductImageCanvas(
     sourceImages: string[],
     style: typeof PRODUCT_STYLES[number],
     index: number
 ): Promise<string> {
     const canvas = document.createElement('canvas');
-    canvas.width = 1000;
-    canvas.height = 1000;
+    canvas.width = IMG_SIZE;
+    canvas.height = IMG_SIZE;
     const ctx = canvas.getContext('2d')!;
 
     if (style.bg.startsWith('linear')) {
-        const grad = ctx.createLinearGradient(0, 0, 1000, 1000);
+        const grad = ctx.createLinearGradient(0, 0, IMG_SIZE, IMG_SIZE);
         grad.addColorStop(0, '#f5f7fa');
         grad.addColorStop(1, '#c3cfe2');
         ctx.fillStyle = grad;
     } else {
         ctx.fillStyle = style.bg;
     }
-    ctx.fillRect(0, 0, 1000, 1000);
+    ctx.fillRect(0, 0, IMG_SIZE, IMG_SIZE);
 
     const imgIndex = index % sourceImages.length;
     const img = await loadImage(sourceImages[imgIndex]);
-    const padding = 60;
-    const scale = Math.min((1000 - padding * 2) / img.width, (1000 - padding * 2) / img.height);
+    const padding = 50;
+    const scale = Math.min((IMG_SIZE - padding * 2) / img.width, (IMG_SIZE - padding * 2) / img.height);
     const w = img.width * scale;
     const h = img.height * scale;
 
     ctx.filter = style.filter;
     ctx.shadowColor = 'rgba(0, 0, 0, 0.15)';
-    ctx.shadowBlur = 30;
-    ctx.shadowOffsetY = 10;
-    ctx.drawImage(img, (1000 - w) / 2, (1000 - h) / 2, w, h);
+    ctx.shadowBlur = 25;
+    ctx.shadowOffsetY = 8;
+    ctx.drawImage(img, (IMG_SIZE - w) / 2, (IMG_SIZE - h) / 2, w, h);
     ctx.filter = 'none';
     ctx.shadowColor = 'transparent';
 
     ctx.globalAlpha = 0.06;
-    ctx.font = 'bold 36px Inter, system-ui, sans-serif';
+    ctx.font = 'bold 28px Inter, system-ui, sans-serif';
     ctx.fillStyle = '#000';
     ctx.textAlign = 'center';
-    ctx.fillText('TOPM', 500, 960);
+    ctx.fillText('TOPM', IMG_SIZE / 2, IMG_SIZE - 20);
     ctx.globalAlpha = 1;
 
     return canvas.toDataURL('image/jpeg', 0.92);
@@ -175,11 +201,12 @@ async function generateEffectImageCanvas(
     index: number
 ): Promise<string> {
     const canvas = document.createElement('canvas');
-    canvas.width = 1000;
-    canvas.height = 1000;
+    canvas.width = IMG_SIZE;
+    canvas.height = IMG_SIZE;
     const ctx = canvas.getContext('2d')!;
 
-    const bgGrad = ctx.createRadialGradient(500, 500, 100, 500, 500, 700);
+    const center = IMG_SIZE / 2;
+    const bgGrad = ctx.createRadialGradient(center, center, 80, center, center, IMG_SIZE * 0.7);
     if (index === 0) {
         bgGrad.addColorStop(0, '#faf5ef');
         bgGrad.addColorStop(0.5, '#f0e8da');
@@ -190,42 +217,42 @@ async function generateEffectImageCanvas(
         bgGrad.addColorStop(1, '#a8b5cc');
     }
     ctx.fillStyle = bgGrad;
-    ctx.fillRect(0, 0, 1000, 1000);
+    ctx.fillRect(0, 0, IMG_SIZE, IMG_SIZE);
 
     ctx.globalAlpha = 0.05;
     for (let i = 0; i < 6; i++) {
         ctx.beginPath();
-        ctx.arc(Math.random() * 1000, Math.random() * 1000, 50 + Math.random() * 200, 0, Math.PI * 2);
+        ctx.arc(Math.random() * IMG_SIZE, Math.random() * IMG_SIZE, 40 + Math.random() * 160, 0, Math.PI * 2);
         ctx.fillStyle = index === 0 ? '#c89b5c' : '#6b8cc7';
         ctx.fill();
     }
     ctx.globalAlpha = 1;
 
     const mainImg = await loadImage(sourceImages[0]);
-    const scale = Math.min(600 / mainImg.width, 600 / mainImg.height);
+    const scale = Math.min(480 / mainImg.width, 480 / mainImg.height);
     ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
-    ctx.shadowBlur = 40;
-    ctx.shadowOffsetY = 15;
-    const offsetX = index === 0 ? 80 : -30;
-    ctx.drawImage(mainImg, (1000 - mainImg.width * scale) / 2 + offsetX, (1000 - mainImg.height * scale) / 2 - 20, mainImg.width * scale, mainImg.height * scale);
+    ctx.shadowBlur = 32;
+    ctx.shadowOffsetY = 12;
+    const offsetX = index === 0 ? 60 : -20;
+    ctx.drawImage(mainImg, (IMG_SIZE - mainImg.width * scale) / 2 + offsetX, (IMG_SIZE - mainImg.height * scale) / 2 - 15, mainImg.width * scale, mainImg.height * scale);
     ctx.shadowColor = 'transparent';
 
     if (sourceImages.length > 1) {
         const secImg = await loadImage(sourceImages[1]);
-        const s2 = Math.min(280 / secImg.width, 280 / secImg.height);
+        const s2 = Math.min(220 / secImg.width, 220 / secImg.height);
         ctx.globalAlpha = 0.85;
         ctx.shadowColor = 'rgba(0,0,0,0.15)';
-        ctx.shadowBlur = 20;
-        ctx.drawImage(secImg, index === 0 ? 650 : 80, 620, secImg.width * s2, secImg.height * s2);
+        ctx.shadowBlur = 16;
+        ctx.drawImage(secImg, index === 0 ? 520 : 60, 500, secImg.width * s2, secImg.height * s2);
         ctx.globalAlpha = 1;
         ctx.shadowColor = 'transparent';
     }
 
     ctx.globalAlpha = 0.08;
-    ctx.font = 'bold 48px Inter, system-ui, sans-serif';
+    ctx.font = 'bold 36px Inter, system-ui, sans-serif';
     ctx.fillStyle = '#000';
     ctx.textAlign = 'center';
-    ctx.fillText('TOPM PHOTO', 500, 950);
+    ctx.fillText('TOPM PHOTO', center, IMG_SIZE - 20);
     ctx.globalAlpha = 1;
 
     return canvas.toDataURL('image/jpeg', 0.92);
@@ -354,17 +381,20 @@ function generateProductInfoFallback(): {
 
 // ===== 图片生成 Prompt 模板 =====
 
+/** 白底产品图 prompt */
+const WHITE_BG_PROMPT = 'Place this exact product centered on a pure clean white background (#FFFFFF), no shadows, no decorations, no props, product fills 80% of the frame, straight-on angle, even flat studio lighting, e-commerce product listing photo on white background, 800x800 pixels, ultra sharp details';
+
 const PRODUCT_IMG_PROMPTS = [
-    'Place this product on a luxurious white marble surface with subtle veining, soft golden rim lighting from the side, a gentle gradient backdrop from cream to pale gray, small decorative green leaf accent in the corner, professional e-commerce hero image, ultra high quality, 1000x1000',
-    'Display this product at a 45-degree angle on a rich dark wood table, surrounded by soft bokeh warm string lights in the background, a small potted succulent nearby, moody ambient studio lighting with golden hour warmth, premium lifestyle e-commerce photography',
-    'Show this product on a sleek glossy black acrylic surface with mirror reflection, dramatic backlit rim lighting in cool blue and purple tones, clean dark gradient background, futuristic high-end product photography, sharp details',
-    'Place this product on a natural linen fabric textured surface, surrounded by dried flowers, eucalyptus leaves and a small candle, warm earthy color palette with terracotta and sage green accents, soft diffused natural window light, organic aesthetic product photography',
-    'Present this product floating on a dreamy pastel gradient background blending from soft pink to lavender to sky blue, subtle geometric shadow patterns, light sparkle particles, airy and premium feel, modern e-commerce advertising style, high resolution',
+    'Place this product on a luxurious white marble surface with subtle veining, soft golden rim lighting from the side, a gentle gradient backdrop from cream to pale gray, small decorative green leaf accent in the corner, professional e-commerce hero image, ultra high quality, 800x800',
+    'Display this product at a 45-degree angle on a rich dark wood table, surrounded by soft bokeh warm string lights in the background, a small potted succulent nearby, moody ambient studio lighting with golden hour warmth, premium lifestyle e-commerce photography, 800x800',
+    'Show this product on a sleek glossy black acrylic surface with mirror reflection, dramatic backlit rim lighting in cool blue and purple tones, clean dark gradient background, futuristic high-end product photography, sharp details, 800x800',
+    'Place this product on a natural linen fabric textured surface, surrounded by dried flowers, eucalyptus leaves and a small candle, warm earthy color palette with terracotta and sage green accents, soft diffused natural window light, organic aesthetic product photography, 800x800',
+    'Present this product floating on a dreamy pastel gradient background blending from soft pink to lavender to sky blue, subtle geometric shadow patterns, light sparkle particles, airy and premium feel, modern e-commerce advertising style, 800x800',
 ];
 
 const EFFECT_IMG_PROMPTS = [
-    'Place this product in a stunning modern Scandinavian living room scene, light oak furniture, large window with natural sunlight streaming in, a cozy throw blanket, coffee cup and open magazine on the side table, warm inviting atmosphere, editorial lifestyle photography',
-    'Place this product in a sleek professional photography studio setup, dramatic three-point lighting with colored gels (warm amber and cool blue), product elevated on a rotating display pedestal, smoke/haze effect in the background, high-end commercial advertising campaign quality',
+    'Place this product in a stunning modern Scandinavian living room scene, light oak furniture, large window with natural sunlight streaming in, a cozy throw blanket, coffee cup and open magazine on the side table, warm inviting atmosphere, editorial lifestyle photography, 800x800',
+    'Place this product in a sleek professional photography studio setup, dramatic three-point lighting with colored gels (warm amber and cool blue), product elevated on a rotating display pedestal, smoke/haze effect in the background, high-end commercial advertising campaign quality, 800x800',
 ];
 
 
@@ -376,19 +406,31 @@ export async function generateProductContent(
     onProgress?: (progress: number, message: string) => void
 ): Promise<GenerationResult> {
     const useNanoBanana = hasGeminiAccess();
-    const totalSteps = 9;
+    const totalSteps = 10; // 1 白底 + 5 产品图 + 2 效果图 + 1 信息 + 1 完成
     let currentStep = 0;
     const report = (msg: string) => {
         currentStep++;
         onProgress?.(currentStep / totalSteps, msg);
     };
 
-    // Step 1-5: Generate 5 product images
-    report('正在分析产品特征...');
     const productImages: string[] = [];
 
+    // Step 1: 白底产品图（必须是第一张）
+    report('正在生成白底产品图...');
+    if (useNanoBanana) {
+        const whiteBg = await generateImageWithNanoBanana(sourceImages, WHITE_BG_PROMPT);
+        if (whiteBg) {
+            productImages.push(whiteBg);
+        } else {
+            productImages.push(await generateWhiteBgImage(sourceImages));
+        }
+    } else {
+        productImages.push(await generateWhiteBgImage(sourceImages));
+    }
+
+    // Step 2-6: Generate 5 styled product images
     for (let i = 0; i < 5; i++) {
-        report(`正在生成产品图 ${i + 1}/5${useNanoBanana ? '（Nano Banana）' : ''}...`);
+        report(`正在生成产品图 ${i + 2}/6${useNanoBanana ? '（Nano Banana）' : ''}...`);
 
         if (useNanoBanana) {
             const aiImage = await generateImageWithNanoBanana(sourceImages, PRODUCT_IMG_PROMPTS[i]);
