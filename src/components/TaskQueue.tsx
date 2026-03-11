@@ -90,7 +90,7 @@ export default function TaskQueue() {
                                     {task.status === 'completed' && <Check size={12} color="var(--color-success)" />}
                                     {task.status === 'failed' && <AlertCircle size={12} color="var(--color-danger)" />}
                                     <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>
-                                        产品 #{task.productId}
+                                        产品 #{task.productId.slice(0, 8)}
                                     </span>
                                 </div>
                                 {(task.status === 'completed' || task.status === 'failed') && (

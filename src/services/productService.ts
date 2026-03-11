@@ -72,7 +72,7 @@ export async function createProduct(product: Omit<Product, 'id'>): Promise<strin
 
     if (shouldTrySupabase()) {
         try {
-            const { data, error } = await supabase
+            const supabaseInsert = supabase
                 .from('products')
                 .insert({
                     title: product.title,
@@ -90,6 +90,11 @@ export async function createProduct(product: Omit<Product, 'id'>): Promise<strin
                 .select('id')
                 .single();
 
+            const timeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('timeout')), 3000)
+            );
+
+            const { data, error } = await Promise.race([supabaseInsert, timeout]);
             if (!error && data) return data.id;
             markSupabaseFailed();
         } catch {
@@ -158,7 +163,7 @@ export async function getAllProducts(): Promise<Product[]> {
 }
 
 export async function updateProduct(id: string, updates: Partial<Product>): Promise<void> {
-    // 先更新本地
+    // 先更新本地（保证数据不丢）
     const all = getLocalProducts();
     const idx = all.findIndex(p => p.id === id);
     if (idx >= 0) {
@@ -166,6 +171,7 @@ export async function updateProduct(id: string, updates: Partial<Product>): Prom
         saveLocalProducts(all);
     }
 
+    // Supabase 写入（3秒超时，失败不影响本地数据）
     if (shouldTrySupabase()) {
         try {
             const row: Record<string, unknown> = {};
@@ -173,7 +179,12 @@ export async function updateProduct(id: string, updates: Partial<Product>): Prom
                 if (val !== undefined) row[key] = val;
             }
 
-            await supabase.from('products').update(row).eq('id', id);
+            const supabaseUpdate = supabase.from('products').update(row).eq('id', id);
+            const timeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('timeout')), 3000)
+            );
+
+            await Promise.race([supabaseUpdate, timeout]);
         } catch {
             markSupabaseFailed();
         }

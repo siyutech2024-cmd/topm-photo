@@ -89,17 +89,23 @@ class TaskManager {
                 this.notify();
             });
 
-            await updateProduct(task.productId, {
-                title: result.title,
-                description: result.description,
-                price: result.price,
-                category: result.category,
-                attributes: result.attributes,
-                product_images: result.productImages,
-                effect_images: result.effectImages,
-                grid_images: result.gridImages,
-                status: 'generated',
-            });
+            // 更新产品数据（localStorage 优先，Supabase 可能超时但不影响结果）
+            try {
+                await updateProduct(task.productId, {
+                    title: result.title,
+                    description: result.description,
+                    price: result.price,
+                    category: result.category,
+                    attributes: result.attributes,
+                    product_images: result.productImages,
+                    effect_images: result.effectImages,
+                    grid_images: result.gridImages,
+                    status: 'generated',
+                });
+            } catch (updateErr) {
+                // Supabase 写入失败不影响任务状态（数据已在 localStorage）
+                console.warn('产品更新警告（数据已保存本地）:', updateErr);
+            }
 
             task.status = 'completed';
             task.progress = 100;
