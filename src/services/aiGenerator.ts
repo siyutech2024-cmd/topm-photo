@@ -75,6 +75,29 @@ async function loadImage(src: string): Promise<HTMLImageElement> {
     });
 }
 
+/** 将任意尺寸的图片统一缩放到 800×800（居中 cover） */
+async function resizeToTarget(dataUrl: string): Promise<string> {
+    const img = await loadImage(dataUrl);
+    if (img.width === IMG_SIZE && img.height === IMG_SIZE) return dataUrl;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = IMG_SIZE;
+    canvas.height = IMG_SIZE;
+    const ctx = canvas.getContext('2d')!;
+
+    // 白底兜底
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, IMG_SIZE, IMG_SIZE);
+
+    // 居中等比缩放（cover 模式：填满，可能裁切）
+    const scale = Math.max(IMG_SIZE / img.width, IMG_SIZE / img.height);
+    const w = img.width * scale;
+    const h = img.height * scale;
+    ctx.drawImage(img, (IMG_SIZE - w) / 2, (IMG_SIZE - h) / 2, w, h);
+
+    return canvas.toDataURL('image/jpeg', 0.92);
+}
+
 // ===== Nano Banana 图片生成 =====
 
 async function generateImageWithNanoBanana(
@@ -420,7 +443,7 @@ export async function generateProductContent(
     if (useNanoBanana) {
         const whiteBg = await generateImageWithNanoBanana(sourceImages, WHITE_BG_PROMPT);
         if (whiteBg) {
-            productImages.push(whiteBg);
+            productImages.push(await resizeToTarget(whiteBg));
         } else {
             productImages.push(await generateWhiteBgImage(sourceImages));
         }
@@ -435,7 +458,7 @@ export async function generateProductContent(
         if (useNanoBanana) {
             const aiImage = await generateImageWithNanoBanana(sourceImages, PRODUCT_IMG_PROMPTS[i]);
             if (aiImage) {
-                productImages.push(aiImage);
+                productImages.push(await resizeToTarget(aiImage));
                 continue;
             }
         }
@@ -451,7 +474,7 @@ export async function generateProductContent(
         if (useNanoBanana) {
             const aiImage = await generateImageWithNanoBanana(sourceImages, EFFECT_IMG_PROMPTS[i]);
             if (aiImage) {
-                effectImages.push(aiImage);
+                effectImages.push(await resizeToTarget(aiImage));
                 continue;
             }
         }
