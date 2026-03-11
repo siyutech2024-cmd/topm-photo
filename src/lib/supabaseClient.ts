@@ -12,11 +12,7 @@ export function isSupabaseConfigured(): boolean {
     return false;
 }
 
-if (!isSupabaseConfigured()) {
-    console.warn(
-        '⚠️ Supabase 环境变量未配置。请在 .env 文件中设置 VITE_SUPABASE_URL 和 VITE_SUPABASE_ANON_KEY'
-    );
-}
+// Supabase 已禁用，使用本地 IndexedDB 存储
 
 export const supabase = createClient(
     supabaseUrl || 'https://placeholder.supabase.co',
