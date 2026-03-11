@@ -3,15 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-/** 检查 Supabase 是否已正确配置（非占位值） */
+/** 
+ * 检查 Supabase 是否启用
+ * 当前强制使用本地存储模式（localStorage），跳过所有 Supabase 调用
+ * 如需恢复 Supabase，将 return false 改回原来的检查逻辑
+ */
 export function isSupabaseConfigured(): boolean {
-    return !!(
-        supabaseUrl &&
-        supabaseAnonKey &&
-        supabaseUrl !== 'your_supabase_url' &&
-        supabaseAnonKey !== 'your_supabase_anon_key' &&
-        supabaseUrl.startsWith('https://')
-    );
+    return false;
 }
 
 if (!isSupabaseConfigured()) {
